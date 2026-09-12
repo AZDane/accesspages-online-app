@@ -103,6 +103,7 @@ async function navigateStatus(profile, url) {
         !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(item.resource) || fragment.get('resource') !== item.resource ||
         !/^gw_[A-Za-z0-9_-]{43}$/.test(item.expected_gateway_id) ||
         (item.one_time !== undefined && typeof item.one_time !== 'boolean') ||
+        (item.check_invalid_routing !== undefined && typeof item.check_invalid_routing !== 'boolean') ||
         destination.protocol !== 'https:' || destination.username || destination.password ||
         !/^[a-f0-9]{48}\.[a-f0-9]{48}\.sites\.beta\.accesspages\.app$/.test(destination.hostname) ||
         !['20002', '20003'].includes(destination.port) || destination.origin !== item.expected_origin) {
@@ -110,6 +111,17 @@ async function navigateStatus(profile, url) {
     }
     for (const value of [item.access_url, fragment.get('access'), item.expected_origin,
                           destination.hostname, item.expected_gateway_id]) mask(value);
+    if (item.expired_access_url !== undefined) {
+      const expired = new URL(item.expired_access_url);
+      const values = new URLSearchParams(expired.hash.slice(1));
+      if (expired.origin !== landing || expired.pathname !== '/' || expired.search ||
+          !/^[A-Za-z0-9_-]{43}$/.test(values.get('access') || '') ||
+          values.get('resource') !== item.resource ||
+          !Number.isInteger(item.expired_at) || item.expired_at >= Math.floor(Date.now() / 1000)) {
+        throw new Error('Invalid expired invitation input');
+      }
+      mask(item.expired_access_url); mask(values.get('access'));
+    }
     item.address = (await dns.resolve4(destination.hostname))[0];
     item.port = Number(destination.port);
   }
@@ -147,6 +159,40 @@ async function navigateStatus(profile, url) {
       }
     });
     return value;
+  }
+  async function rejectedInvitation(url, name) {
+    stage = name;
+    const profile = await context(), page = await profile.newPage();
+    let handoffAttempted = false;
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === '/handoff') handoffAttempted = true;
+    });
+    await page.goto(url, {waitUntil: 'domcontentloaded', timeout: 30000});
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent === 'Access Link invalid', null, {timeout: 30000});
+    check(name, new URL(page.url()).origin === landing && !handoffAttempted);
+    await profile.close();
+  }
+  for (const item of inputs) {
+    if (item.check_invalid_routing) {
+      const other = inputs.find(value => value !== item);
+      const variants = [
+        ['AccessLink with the other installation ResourceID is rejected', parameters => parameters.set('resource', other.resource)],
+        ['AccessLink without ResourceID is rejected by the current implementation', parameters => parameters.delete('resource')],
+        ['AccessLink with an altered credential is rejected', parameters => {
+          const credential = parameters.get('access');
+          parameters.set('access', (credential[0] === 'A' ? 'B' : 'A') + credential.slice(1));
+        }],
+      ];
+      for (const [name, modify] of variants) {
+        const url = new URL(item.access_url), parameters = new URLSearchParams(url.hash.slice(1));
+        modify(parameters); url.hash = parameters.toString();
+        mask(url.href); mask(parameters.get('access'));
+        await rejectedInvitation(url.href, item.label + ': ' + name);
+      }
+    }
+    if (item.expired_access_url) {
+      await rejectedInvitation(item.expired_access_url, item.label + ': expired unused invitation is rejected');
+    }
   }
   const guests = [];
   for (let index = 0; index < inputs.length; index++) {
