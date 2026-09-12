@@ -28,3 +28,6 @@ jobs:
             --tag accesspages-startup-test accesspages_online_test
       - name: Check startup with isolated networking and enforced AppArmor
         run: python3 tests/check_startup.py accesspages-startup-test
+      - name: Record relevant AppArmor denials
+        if: always()
+        run: sudo journalctl --dmesg --no-pager --grep accesspages_online_test -n 60

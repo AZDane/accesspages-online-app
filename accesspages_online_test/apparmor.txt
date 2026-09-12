@@ -17,6 +17,8 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   signal (receive),
   signal (send) peer=*accesspages_online_test,
 
+  # Python lists the package directory before loading sibling modules.
+  /opt/accesspages-test/ r,
   /opt/accesspages-test/** rix,
   /opt/machinectl rix,
   /opt/frpc rix,
@@ -30,6 +32,7 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   /etc/** r,
   /run/** rwk,
   /tmp/** rwk,
+  /data/ rw,
   /data/** rwk,
   /data/connector/frpc rix,
   /proc/** r,
