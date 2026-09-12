@@ -165,7 +165,8 @@ async function navigateStatus(profile, url) {
     }, {origin: own.item.expected_origin, token: own.handoff});
     const replay = await replayResponse;
     check(own.item.label + ': handoff replay is rejected', replay.status() === 401);
-    await replayPage.close();
+    // Chrome may stall closing a tab during the rejected POST navigation.
+    // Keep these two tabs until the bounded browser cleanup after all checks.
   }
   await stranger.close();
   stage = 'one-use invitation replay';
