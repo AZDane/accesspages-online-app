@@ -10,6 +10,10 @@ const tls = require('node:tls');
 
 const landing = 'https://access.beta.accesspages.app';
 const report = {started: new Date().toISOString(), tests: [], transport: {relay_responses: 0, handoff_responses: [], page_data_responses: [], request_failures: []}};
+const preAdmissionProbes = process.env.ACCESSPAGES_PRE_ADMISSION_PROBES !== 'false';
+const holdSeconds = Number(process.env.ACCESSPAGES_HOLD_SECONDS || 0);
+report.replica = Number(process.env.ACCESSPAGES_TEST_REPLICA || 1);
+report.pre_admission_probes = preAdmissionProbes;
 let stage = 'input validation', browser;
 let destinations = [];
 let reported = false;
@@ -86,6 +90,7 @@ async function navigateStatus(profile, url) {
 }
 
 (async () => {
+  if (!Number.isInteger(holdSeconds) || holdSeconds < 0 || holdSeconds > 120 || ![1, 2, 3].includes(report.replica)) throw new Error('Invalid test scope');
   const inputs = JSON.parse(process.env.ACCESSPAGES_GUEST_TEST_INPUTS || 'null');
   delete process.env.ACCESSPAGES_GUEST_TEST_INPUTS;
   if (!Array.isArray(inputs) || inputs.length !== 2) throw new Error('Missing input');
@@ -111,7 +116,10 @@ async function navigateStatus(profile, url) {
   check('Two different installations supplied', new Set(inputs.map(i => i.expected_origin)).size === 2 && new Set(inputs.map(i => i.label)).size === 2);
   destinations = inputs;
   stage = 'unadmitted network baseline';
-  for (const item of inputs) check(item.label + ': guest port unreachable before admission', !await tcpReachable(item.address, item.port));
+  for (const item of inputs) {
+    if (preAdmissionProbes) check(item.label + ': guest port unreachable before admission', !await tcpReachable(item.address, item.port));
+    else report.tests.push({name: item.label + ': guest-runner network baseline', skipped: 'Network denial is measured by the separate observer'});
+  }
 
   stage = 'browser startup';
   // The runner's packaged Chrome has Ubuntu's supported sandbox profile.
@@ -168,7 +176,7 @@ async function navigateStatus(profile, url) {
     check(item.label + ': authorized page data is available', response.status === 200);
     check(item.label + ': correct page resources arrived', response.body.id === item.resource && Array.isArray(response.body.resources) && response.body.resources.length > 0);
     guests.push(guest);
-    if (index === 0) check('Admission to Demo 1 leaves Demo 2 network port blocked', !await tcpReachable(inputs[1].address, inputs[1].port));
+    if (index === 0 && preAdmissionProbes) check('Admission to Demo 1 leaves Demo 2 network port blocked', !await tcpReachable(inputs[1].address, inputs[1].port));
   }
   stage = 'session and installation isolation';
   const stranger = await context();
@@ -214,6 +222,21 @@ async function navigateStatus(profile, url) {
     await again.close();
   }
   check('Real Browser NHP Relay traffic was observed', report.transport.relay_responses > 0);
+  if (holdSeconds) {
+    stage = 'authorized sessions during independent observation';
+    report.active_observation = {started: new Date().toISOString(), successful_polls: 0, hold_seconds: holdSeconds};
+    const end = Date.now() + holdSeconds * 1000;
+    do {
+      for (const own of guests) {
+        const response = await readPage(own.page, own.item.resource);
+        if (response.status !== 200 || response.body.id !== own.item.resource) throw new Error('Authorized session lost');
+        report.active_observation.successful_polls++;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    } while (Date.now() < end);
+    report.active_observation.finished = new Date().toISOString();
+    check('Both authorized sessions remained usable during observation', true);
+  }
   report.passed = true;
 })().catch(async error => {
   report.passed = false;

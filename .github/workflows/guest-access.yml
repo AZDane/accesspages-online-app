@@ -7,6 +7,23 @@ on:
         description: Check browser startup without guest credentials
         type: boolean
         default: false
+      pre_admission_probes:
+        description: Probe from the guest runner before admission
+        type: boolean
+        default: true
+      independent_observer:
+        description: Run a separate observer without AccessLink credentials
+        type: boolean
+        default: false
+      replicas:
+        description: Independent guest runner count
+        type: choice
+        options: ['1', '3']
+        default: '1'
+      hold_seconds:
+        description: Keep authorized sessions active for up to 120 seconds
+        type: number
+        default: 0
 
 permissions:
   contents: read
@@ -17,6 +34,10 @@ concurrency:
 
 jobs:
   guest:
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: ${{ fromJSON(inputs.replicas == '3' && '[1,2,3]' || '[1]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
@@ -37,4 +58,19 @@ jobs:
         env:
           NODE_PATH: ${{ runner.temp }}/accesspages-browser-deps/node_modules
           ACCESSPAGES_GUEST_TEST_INPUTS: ${{ secrets.ACCESSPAGES_HOME_GUEST_TEST_INPUTS }}
+          ACCESSPAGES_PRE_ADMISSION_PROBES: ${{ inputs.pre_admission_probes }}
+          ACCESSPAGES_HOLD_SECONDS: ${{ inputs.hold_seconds }}
+          ACCESSPAGES_TEST_REPLICA: ${{ matrix.replica }}
         run: node tests/check_guest_access.cjs
+  observer:
+    if: ${{ inputs.independent_observer && !inputs.browser_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Observe guest endpoints without admission credentials
+        env:
+          ACCESSPAGES_OBSERVER_TARGETS: ${{ secrets.ACCESSPAGES_HOME_OBSERVER_TARGETS }}
+        run: python3 tests/observe_guest_ports.py
