@@ -25,7 +25,7 @@ RUN cd /build/frp \
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.2
+ARG BUILD_VERSION=0.1.0-beta.3
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online test" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-test"
 RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \

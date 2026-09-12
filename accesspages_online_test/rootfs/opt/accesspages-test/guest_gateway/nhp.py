@@ -75,6 +75,10 @@ class NHPClient:
         if row:machine({'op':'revoke_link','access':row['secret']})
         return not bool(row)
 
+# Match the browser's bounded issue-time allowance across independent clocks.
+# Expiration and the absolute session deadline remain strict.
+ISSUED_AT_CLOCK_SKEW_SECONDS = 5
+
 def verify(token):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     if len(token)>4096:raise ValueError()
@@ -92,7 +96,7 @@ def verify(token):
         resource_allowed = isinstance(claims.get('resource'),str) and validate_page_id(claims['resource'])==claims['resource']
         if type(claims.get('gateway_epoch')) is not int or claims['gateway_epoch']!=binding['route']['epoch']:raise ValueError()
     if (claims.get('iss')!='nhp-guest-authority' or claims.get('aud')!='guest-gateway' or claims.get('gateway_id')!=gid or not resource_allowed
-        or type(claims.get('iat')) is not int or type(claims.get('exp')) is not int or not claims['iat']<=now<claims['exp'] or not 0<claims['exp']-claims['iat']<=60
+        or type(claims.get('iat')) is not int or type(claims.get('exp')) is not int or claims['iat']>now+ISSUED_AT_CLOCK_SKEW_SECONDS or now>=claims['exp'] or not 0<claims['exp']-claims['iat']<=60
         or not isinstance(claims.get('guest_token'),str) or len(claims['guest_token'])!=43 or not isinstance(claims.get('grant_id'),str) or len(claims['grant_id'])!=43):raise ValueError()
     return claims
 

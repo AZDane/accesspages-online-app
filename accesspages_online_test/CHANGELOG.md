@@ -1,3 +1,7 @@
+# 0.1.0-beta.3
+
+- Accept signed handoff issue timestamps up to five seconds ahead to accommodate clock differences. Signature, destination, replay and expiration checks remain enforced.
+
 # 0.1.0-beta.2
 
 - One enrollment action creates persistent native Gateway and separate connector identities.
