@@ -96,11 +96,11 @@ async function navigateStatus(profile, url) {
   if (!Array.isArray(inputs) || inputs.length !== 2) throw new Error('Missing input');
   for (const item of inputs) {
     const access = new URL(item.access_url), destination = new URL(item.expected_origin);
-    const fragment = new URLSearchParams(access.hash.slice(1));
+    const credential = access.hash.slice(1);
     if (!['demo-ha-1', 'demo-ha-2'].includes(item.label) || access.origin !== landing ||
         access.pathname !== '/' || access.search ||
-        !/^[A-Za-z0-9_-]{43}$/.test(fragment.get('access') || '') ||
-        !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(item.resource) || fragment.get('resource') !== item.resource ||
+        !/^[A-Za-z0-9_-]{43}$/.test(credential) ||
+        !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(item.resource) ||
         !/^gw_[A-Za-z0-9_-]{43}$/.test(item.expected_gateway_id) ||
         (item.one_time !== undefined && typeof item.one_time !== 'boolean') ||
         (item.check_invalid_routing !== undefined && typeof item.check_invalid_routing !== 'boolean') ||
@@ -109,18 +109,17 @@ async function navigateStatus(profile, url) {
         !['20002', '20003'].includes(destination.port) || destination.origin !== item.expected_origin) {
       throw new Error('Invalid scoped input');
     }
-    for (const value of [item.access_url, fragment.get('access'), item.expected_origin,
+    for (const value of [item.access_url, credential, item.expected_origin,
                           destination.hostname, item.expected_gateway_id]) mask(value);
     if (item.expired_access_url !== undefined) {
       const expired = new URL(item.expired_access_url);
-      const values = new URLSearchParams(expired.hash.slice(1));
+      const expiredCredential = expired.hash.slice(1);
       if (expired.origin !== landing || expired.pathname !== '/' || expired.search ||
-          !/^[A-Za-z0-9_-]{43}$/.test(values.get('access') || '') ||
-          values.get('resource') !== item.resource ||
+          !/^[A-Za-z0-9_-]{43}$/.test(expiredCredential) ||
           !Number.isInteger(item.expired_at) || item.expired_at >= Math.floor(Date.now() / 1000)) {
         throw new Error('Invalid expired invitation input');
       }
-      mask(item.expired_access_url); mask(values.get('access'));
+      mask(item.expired_access_url); mask(expiredCredential);
     }
     item.address = (await dns.resolve4(destination.hostname))[0];
     item.port = Number(destination.port);
@@ -130,7 +129,7 @@ async function navigateStatus(profile, url) {
   stage = 'unadmitted network baseline';
   for (const item of inputs) {
     if (preAdmissionProbes) check(item.label + ': guest port unreachable before admission', !await tcpReachable(item.address, item.port));
-    else report.tests.push({name: item.label + ': guest-runner network baseline', skipped: 'Network denial is measured by the separate observer'});
+    else report.tests.push({name: item.label + ': guest-runner network baseline', skipped: 'Disabled; separate observer evidence is required for network denial'});
   }
 
   stage = 'browser startup';
@@ -176,17 +175,17 @@ async function navigateStatus(profile, url) {
     if (item.check_invalid_routing) {
       const other = inputs.find(value => value !== item);
       const variants = [
-        ['AccessLink with the other installation ResourceID is rejected', parameters => parameters.set('resource', other.resource)],
-        ['AccessLink without ResourceID is rejected by the current implementation', parameters => parameters.delete('resource')],
-        ['AccessLink with an altered credential is rejected', parameters => {
-          const credential = parameters.get('access');
-          parameters.set('access', (credential[0] === 'A' ? 'B' : 'A') + credential.slice(1));
+        ['ResourceID injection into an opaque AccessLink is rejected', url => {url.hash += '&resource=' + other.resource;}],
+        ['Old named-parameter link format is rejected', url => {url.hash = 'access=' + url.hash.slice(1);} ],
+        ['AccessLink with an altered credential is rejected', url => {
+          const credential = url.hash.slice(1);
+          url.hash = (credential[0] === 'A' ? 'B' : 'A') + credential.slice(1);
         }],
       ];
       for (const [name, modify] of variants) {
-        const url = new URL(item.access_url), parameters = new URLSearchParams(url.hash.slice(1));
-        modify(parameters); url.hash = parameters.toString();
-        mask(url.href); mask(parameters.get('access'));
+        const url = new URL(item.access_url);
+        modify(url);
+        mask(url.href); mask(url.hash.slice(1));
         await rejectedInvitation(url.href, item.label + ': ' + name);
       }
     }

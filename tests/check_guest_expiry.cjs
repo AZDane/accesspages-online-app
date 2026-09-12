@@ -20,9 +20,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       item.resource !== 'page-ha-green-demo-2' || !/^gw_[A-Za-z0-9_-]{43}$/.test(item.expected_gateway_id) ||
       !Number.isInteger(item.expires)) throw new Error('Invalid scoped input');
   for (const link of [item.access_url, item.renewal_url]) {
-    const url = new URL(link), hash = new URLSearchParams(url.hash.slice(1));
-    if (url.origin !== landing || url.pathname !== '/' || url.search || hash.get('resource') !== item.resource || !/^[A-Za-z0-9_-]{43}$/.test(hash.get('access') || '')) throw new Error('Invalid link');
-    for (const value of [link, hash.get('access')]) console.log('::add-mask::' + value);
+    const url = new URL(link), credential = url.hash.slice(1);
+    if (url.origin !== landing || url.pathname !== '/' || url.search || !/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid link');
+    for (const value of [link, credential]) console.log('::add-mask::' + value);
   }
   for (const value of [item.expected_origin, destination.hostname, item.expected_gateway_id]) console.log('::add-mask::' + value);
   const remaining = item.expires - Date.now() / 1000;
