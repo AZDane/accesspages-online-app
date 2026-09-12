@@ -10,8 +10,22 @@ const net = require('node:net');
 const landing = 'https://access.beta.accesspages.app';
 const report = {started: new Date().toISOString(), tests: [], transport: {relay_responses: 0, handoff_responses: [], page_data_responses: [], request_failures: []}};
 let stage = 'input validation', browser;
+let reported = false;
+function finishReport() {
+  if (reported) return;
+  reported = true;
+  report.finished = new Date().toISOString();
+  console.log('GUEST_CHECK_RESULT ' + JSON.stringify(report));
+}
+const deadline = setTimeout(() => {
+  report.passed = false;
+  report.failure = {stage, type: 'TestDeadlineExceeded'};
+  finishReport();
+  process.exit(1);
+}, 180000);
 function check(name, passed) {
   report.tests.push({name, passed: Boolean(passed)});
+  console.log('GUEST_CHECK_PROGRESS ' + JSON.stringify({name, passed: Boolean(passed)}));
   if (!passed) throw new Error('Check failed');
 }
 function mask(value) { console.log('::add-mask::' + value); }
@@ -140,7 +154,9 @@ async function navigateStatus(profile, url) {
     await copied.close();
     check(own.item.label + ': guest endpoint hides Admin', await navigateStatus(own.profile, own.item.expected_origin + '/api/admin/pages') === 404);
     const replayPage = await own.profile.newPage();
+    stage = own.item.label + ': unexpired handoff replay';
     await replayPage.goto(landing, {waitUntil: 'domcontentloaded'});
+    check(own.item.label + ': replay uses an unexpired signed handoff', own.claims.exp > Math.floor(Date.now() / 1000) + 5);
     const replayResponse = replayPage.waitForResponse(response => response.url() === own.item.expected_origin + '/handoff', {timeout: 20000});
     await replayPage.evaluate(({origin, token}) => {
       const form = document.createElement('form'); form.method = 'POST'; form.action = origin + '/handoff';
@@ -173,7 +189,8 @@ async function navigateStatus(profile, url) {
   report.failure = {stage, type: error.name, codes: [...new Set(error.message?.match(/net::ERR_[A-Z_]+|ECONN[A-Z]+|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/g) || [])]};
   process.exitCode = 1;
 }).finally(async () => {
-  if (browser) await browser.close().catch(() => {});
-  report.finished = new Date().toISOString();
-  console.log('GUEST_CHECK_RESULT ' + JSON.stringify(report));
+  finishReport();
+  if (browser) await Promise.race([browser.close().catch(() => {}), new Promise(resolve => setTimeout(resolve, 5000))]);
+  clearTimeout(deadline);
+  process.exit(process.exitCode || 0);
 });
