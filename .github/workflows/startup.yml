@@ -1,0 +1,30 @@
+name: App startup
+
+on:
+  push:
+    branches: [main, diagnose/ha-startup]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install AppArmor test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends apparmor-utils
+          sudo apparmor_parser -r accesspages_online_test/apparmor.txt
+      - name: Build the published app
+        run: |
+          docker build --pull --progress=plain \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.22 \
+            --tag accesspages-startup-test accesspages_online_test
+      - name: Check startup with isolated networking and enforced AppArmor
+        run: python3 tests/check_startup.py accesspages-startup-test
