@@ -18,3 +18,11 @@ The app retains its own Gateway identity, separate connector identity, and TLS p
 This is a beta for dedicated test installations. A successful container test does not establish that every HAOS/Supervisor/device combination works. Hosted deployment and live-provider acceptance are tracked separately from app installation. Preserve app data; resetting or restoring older identities requires operator reconciliation.
 
 See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages_online_test/CHANGELOG.md).
+
+## Testing
+
+GitHub Actions is disabled for this repository. Live guest tests run from the
+operator's laptop. Do not upload enrollment credentials, AccessLinks, guest
+sessions or home test targets to GitHub secrets, workflow inputs, logs or artifacts.
+The remaining offline test source uses synthetic data; the public repository
+continues to provide the installable app.
