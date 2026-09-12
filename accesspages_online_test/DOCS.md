@@ -6,7 +6,8 @@ It uses built-in demo devices so that NHP can be tested without HA credentials.
 
 ## Configuration
 
-There are no entity, hostname, port, key or tunnel credential options to assemble.
+Set the Service address on the app's Configuration page. The app obtains its
+route and tunnel credentials from that service during enrollment.
 Select the demo door, light or temperature sensor and permitted actions when
 creating each page in Admin. Actions change only in-memory demo data; restarting
 the app resets device states but preserves pages, identities and invitations.
@@ -21,7 +22,7 @@ to child processes. Supplying an HA token cannot enable live-device access.
 
 1. The beta operator provisions an installation in OpenNHP Service and supplies
    its owner with a private, expiring enrollment API token.
-2. Start the app, open it through HA Ingress and paste that link.
+2. Start the app, open it through HA Ingress and paste that token.
 3. The app generates its own Gateway identity and completes native REG/RAK. It
    registers a separate connector identity and receives its allocated route.
 4. The app generates a private TLS key locally and submits only a CSR for its
@@ -38,6 +39,10 @@ Create a page and select its demo entities and allowed actions. Create a guest
 invitation with a lifetime and optional verification, then share the AccessLink
 privately. The guest starts at the shared access website. OpenNHP admission is
 followed by a signed, one-use handoff to the customer's Guest Gateway.
+
+Beta.5 uses `/#<token>` invitations and rejects the earlier named-parameter link
+format. After updating, create fresh demo pages and guests for acceptance testing.
+Existing installations retain their enrolled identities; no new bootstrap is needed.
 
 All pages use one installation endpoint; their grants and sessions remain
 separate. Revocation in Admin removes the local grant and revokes its hosted
