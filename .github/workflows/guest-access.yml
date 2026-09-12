@@ -2,6 +2,11 @@ name: Private guest access check
 
 on:
   workflow_dispatch:
+    inputs:
+      browser_only:
+        description: Check browser startup without guest credentials
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,13 +26,14 @@ jobs:
       - name: Install pinned browser test dependencies
         run: |
           npm install --prefix "$RUNNER_TEMP/accesspages-browser-deps" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.63.0
-          "$RUNNER_TEMP/accesspages-browser-deps/node_modules/.bin/playwright" install --with-deps chromium
+          "$RUNNER_TEMP/accesspages-browser-deps/node_modules/.bin/playwright" install --with-deps chrome
       - name: Verify Chromium startup without test credentials
         env:
           NODE_PATH: ${{ runner.temp }}/accesspages-browser-deps/node_modules
         run: |
-          node -e 'const {chromium}=require("playwright"); (async()=>{const browser=await chromium.launch({headless:true,chromiumSandbox:true}); await browser.close(); console.log("Sandboxed Chromium startup passed")})().catch(error=>{console.error(error);process.exitCode=1})'
+          node -e 'const {chromium}=require("playwright"); (async()=>{const browser=await chromium.launch({channel:"chrome",headless:true,chromiumSandbox:true}); console.log("Sandboxed Chrome startup passed: "+browser.version()); await browser.close()})().catch(error=>{console.error(error);process.exitCode=1})'
       - name: Check real NHP guest admission and installation isolation
+        if: ${{ !inputs.browser_only }}
         env:
           NODE_PATH: ${{ runner.temp }}/accesspages-browser-deps/node_modules
           ACCESSPAGES_GUEST_TEST_INPUTS: ${{ secrets.ACCESSPAGES_HOME_GUEST_TEST_INPUTS }}

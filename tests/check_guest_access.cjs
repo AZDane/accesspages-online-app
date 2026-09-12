@@ -55,7 +55,9 @@ function cookieName(resource) {
   for (const item of inputs) check(item.label + ': guest port unreachable before admission', !await tcpReachable(item.address, item.port));
 
   stage = 'browser startup';
-  browser = await chromium.launch({headless: true, chromiumSandbox: true});
+  // The runner's packaged Chrome has Ubuntu's supported sandbox profile.
+  browser = await chromium.launch({channel: 'chrome', headless: true, chromiumSandbox: true});
+  report.browser_version = browser.version();
   const allowedOrigins = new Set([landing, 'https://relay.beta.accesspages.app:8443', ...inputs.map(i => i.expected_origin)]);
   async function context() {
     const value = await browser.newContext();
