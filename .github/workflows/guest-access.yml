@@ -1,0 +1,29 @@
+name: Private guest access check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-guest-access
+  cancel-in-progress: false
+
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install pinned browser test dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/accesspages-browser-deps" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.63.0
+          "$RUNNER_TEMP/accesspages-browser-deps/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Check real NHP guest admission and installation isolation
+        env:
+          NODE_PATH: ${{ runner.temp }}/accesspages-browser-deps/node_modules
+          ACCESSPAGES_GUEST_TEST_INPUTS: ${{ secrets.ACCESSPAGES_HOME_GUEST_TEST_INPUTS }}
+        run: node tests/check_guest_access.cjs
