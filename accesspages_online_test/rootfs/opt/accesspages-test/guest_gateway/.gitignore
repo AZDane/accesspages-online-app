@@ -1,0 +1,47 @@
+.env
+.DS_Store
+
+# Local research and unrelated workspace artifacts. These are not gateway
+# source and must not be added to the release repository.
+harvested/
+ursa-field-lab.html
+ursaminor.aspx
+.codex/
+layer-v-ha-token-revoke-fix.patch
+__pycache__/
+*.pyc
+
+# Local backups and archives
+.env.backup
+.env.save
+.env.ha-demo
+.env.ha-benchmark
+:Users:johnraahauge:layer-v-ha-test:.env.ha-benchmark
+*.backup
+*.before-*
+*.zip
+dist/
+
+# Runtime gateway configuration
+gateway-data/
+gateway-data-test/
+gateway-data-test-backup*/
+ha-demo-data/
+ha-demo-gateway-data/
+ha-demo-guest-runtime/
+ha-demo-policy-data/
+ha-demo-access_service-broker-data/
+ha-demo-connector-config/
+ha-demo-connector-secrets/
+ha-demo-connector-state/
+
+# Connector secrets and state
+connector-secrets/
+connector-state/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

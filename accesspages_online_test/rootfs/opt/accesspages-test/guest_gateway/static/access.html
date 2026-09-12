@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08152e">
+  <title>Access Pages</title>
+  <link rel="stylesheet" href="/static/access.css">
+</head>
+<body>
+  <main class="shell">
+    <aside id="preview-toolbar" class="preview-toolbar hidden" aria-label="Preview controls">
+      <div>
+        <strong>Preview mode</strong>
+        <span>This is how the page will appear to a guest.</span>
+      </div>
+      <button id="preview-back" class="preview-back" type="button">
+        ← Back to Access Pages
+      </button>
+    </aside>
+
+    <div class="brand-row">
+      <img src="/static/access-pages-mark.png" alt="">
+      <img class="access-pages-wordmark" src="/static/access-pages-wordmark.png"
+           alt="Access Pages">
+    </div>
+
+    <header>
+      <p class="eyebrow">Purpose-limited access</p>
+      <h1 id="title">Access Page</h1>
+      <p id="description">
+        Only the controls approved for this link are available.
+      </p>
+    </header>
+
+    <div id="status" class="status">Loading available controls…</div>
+    <section id="resources" class="resources"></section>
+
+    <dialog id="verification-dialog" class="proximity-dialog">
+      <form id="verification-form" class="proximity-dialog-content">
+        <p class="eyebrow">Guest verification</p>
+        <h2>Check your email</h2>
+        <p id="verification-message">Request a code to continue.</p>
+        <label class="verification-code-field">
+          <span>6-digit code</span>
+          <input id="verification-code" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]{6}" maxlength="6" required>
+        </label>
+        <div class="proximity-dialog-actions">
+          <button id="send-verification" class="hidden" type="button">Send new code</button>
+          <button id="paste-verification" type="button">Paste code</button>
+        </div>
+        <div id="verification-status" class="status"></div>
+      </form>
+    </dialog>
+
+    <dialog id="proximity-dialog" class="proximity-dialog">
+      <div class="proximity-dialog-content">
+        <p class="eyebrow">Nearby-only controls</p>
+        <h2>Allow location to use controls?</h2>
+        <p>
+          This page checks that you are near the home before sending a command.
+          Your exact location is not stored.
+        </p>
+        <ul>
+          <li>Status remains visible without location access.</li>
+          <li>A successful check is reused for up to 5 minutes.</li>
+          <li>Your browser will ask before sharing your location.</li>
+        </ul>
+        <div class="proximity-dialog-actions">
+          <button id="proximity-cancel" type="button">Not now</button>
+          <button id="proximity-continue" type="button">Continue</button>
+        </div>
+      </div>
+    </dialog>
+
+    <footer>
+      <p>Only the controls approved for this guest link are available.</p>
+      <div class="powered-by">
+        <span>Powered by</span>
+        <a href="https://access_service.ai" target="_blank" rel="noopener noreferrer">
+          OpenNHP Service
+        </a>
+      </div>
+    </footer>
+  </main>
+
+  <script type="module" src="/static/access.js"></script>
+</body>
+</html>

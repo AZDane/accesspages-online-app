@@ -1,0 +1,17 @@
+name: Access Pages Online test
+slug: accesspages_online_test
+description: Guest access through the OpenNHP Service with a customer-owned Guest Gateway
+version: 0.1.0-beta.2
+stage: experimental
+startup: application
+boot: auto
+init: false
+arch:
+  - amd64
+  - aarch64
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:shield-key-outline
+options: {}
+schema: {}

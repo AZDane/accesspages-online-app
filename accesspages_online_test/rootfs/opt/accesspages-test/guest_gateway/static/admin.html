@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08152e">
+  <title>Access Pages for Home Assistant</title>
+  <link rel="stylesheet" href="static/admin.css?v=opennhp-cleanup-1">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="app-brand">
+          <img src="static/access-pages-mark.png" alt="">
+          <div class="brand-copy">
+            <img class="access-pages-wordmark" src="static/access-pages-wordmark.png"
+                 alt="Access Pages">
+            <span class="brand-subtitle">For Home Assistant</span>
+            <span class="brand-tagline">Share access. Not your system.</span>
+          </div>
+        </div>
+        <h1>Pages</h1>
+        <p class="intro">
+          Give guests secure, expiring access to only the Home Assistant
+          controls you choose—without exposing Home Assistant to the internet.
+        </p>
+      </div>
+      <button id="new-page" class="primary" type="button">+ New page</button>
+    </header>
+
+    <div id="status" class="status">Loading pages…</div>
+
+    <section id="dashboard">
+      <div id="page-list" class="page-list"></div>
+      <section class="gateway-status-panel panel">
+        <div>
+          <p class="eyebrow">System status</p>
+          <h2>Gateway health</h2>
+          <p>
+            Read-only runtime details for confirming the installed build and
+            secure-link service configuration.
+          </p>
+        </div>
+        <dl class="gateway-status-grid">
+          <div>
+            <dt>Version</dt>
+            <dd id="gateway-version">Loading…</dd>
+          </div>
+          <div>
+            <dt>Gateway</dt>
+            <dd id="gateway-health">Checking…</dd>
+          </div>
+          <div>
+            <dt>NHP Server</dt>
+            <dd id="gateway-access_service">Checking…</dd>
+          </div>
+          <div>
+            <dt>Email delivery</dt>
+            <dd id="gateway-email">Checking…</dd>
+          </div>
+          <div>
+            <dt>Guest alerts</dt>
+            <dd id="gateway-notifications">Checking…</dd>
+          </div>
+          <div>
+            <dt>Pages</dt>
+            <dd id="gateway-pages">—</dd>
+          </div>
+          <div>
+            <dt>Connectors</dt>
+            <dd id="gateway-connectors">Checking…</dd>
+          </div>
+          <div>
+            <dt>Active guest links</dt>
+            <dd id="gateway-guests">—</dd>
+          </div>
+        </dl>
+        <button id="configure-email" class="secondary" type="button">
+          Configure email & alerts
+        </button>
+      </section>
+      <section class="connection-panel panel" style="display:none">
+        <div>
+          <p class="eyebrow">OpenNHP Service connection</p>
+          <h2>Connector and credentials</h2>
+          <p>
+            Reset only if this installation must connect as a new OpenNHP Service
+            connector. Your page layouts stay, but every guest link is revoked.
+          </p>
+        </div>
+        <button id="open-reset-dialog" class="danger" type="button">
+          Reset OpenNHP Service connection
+        </button>
+      </section>
+    </section>
+
+    <section id="editor" class="editor-view hidden">
+      <div class="editor-topbar">
+        <button id="back" class="secondary" type="button">← Pages</button>
+        <div class="editor-actions">
+          <button id="editor-users" class="secondary hidden" type="button">
+            Guests
+          </button>
+          <a id="preview" class="secondary link-button hidden">Preview</a>
+          <button id="delete" class="danger hidden" type="button">Delete</button>
+          <button id="save" class="primary" type="button">Save page</button>
+        </div>
+      </div>
+
+      <section class="page-details panel">
+        <label>
+          <span>Page name</span>
+          <input id="title" maxlength="80"
+                 placeholder="Cat Sitter">
+        </label>
+
+        <label>
+          <span>Page ID / URL name</span>
+          <div class="slug-row">
+            <span>/access/</span>
+            <input id="page-id" maxlength="64"
+                   placeholder="cat-sitter">
+          </div>
+        </label>
+
+        <label class="wide">
+          <span>Description shown to the guest</span>
+          <textarea id="description" maxlength="240"
+                    placeholder="Front-door and cat-feeding access while we are away."></textarea>
+        </label>
+
+        <div class="wide proximity-settings">
+          <label class="proximity-toggle">
+            <input id="proximity-enabled" type="checkbox">
+            <span>
+              Require proximity for actions
+              <small>
+                Guests can view status anywhere, but must be near Home to use controls.
+              </small>
+            </span>
+          </label>
+          <label id="proximity-radius-field" class="proximity-radius hidden">
+            <span>Allowed distance from Home</span>
+            <span class="distance-input">
+              <input id="proximity-radius" type="number" min="50" max="50000"
+                     step="50" value="500">
+              <span>metres</span>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section class="resource-heading panel">
+        <div>
+          <p class="eyebrow">Guest resources</p>
+          <h2>Selected entities</h2>
+          <p>
+            Choose entities first, then approve exactly what guests may do.
+          </p>
+        </div>
+        <div class="resource-heading-actions">
+          <span><strong id="selected-count">0</strong> selected</span>
+          <button id="refresh" class="secondary" type="button">
+            Refresh
+          </button>
+          <button id="open-picker" class="primary" type="button">
+            + Add resources
+          </button>
+        </div>
+      </section>
+
+      <section id="catalog" class="catalog"></section>
+
+      <nav class="editor-bottom-actions" aria-label="Page actions">
+        <button id="editor-users-bottom" class="secondary hidden" type="button">
+          Guests
+        </button>
+        <button id="save-bottom" class="primary" type="button">
+          Save page
+        </button>
+      </nav>
+    </section>
+
+    <section id="users" class="editor-view hidden">
+      <div class="editor-topbar">
+        <button id="users-back" class="secondary" type="button">← Pages</button>
+        <div class="editor-actions">
+          <button id="users-edit" class="secondary" type="button">Edit page</button>
+          <button id="users-preview" class="secondary" type="button">Preview</button>
+        </div>
+      </div>
+
+      <section class="users-intro panel">
+        <p class="eyebrow">Page guests</p>
+        <h2 id="users-title">Access guests</h2>
+        <p>
+          Reuse this page for multiple people. Each named guest receives an
+          NHP AccessLink that can expire or be revoked without affecting
+          anyone else.
+        </p>
+      </section>
+
+      <section class="secure-access panel">
+        <div class="secure-access-heading">
+          <div>
+            <p class="eyebrow">Secure access</p>
+            <h2>Guests</h2>
+            <p>
+              Manage the people who can use this page and their individual AccessLinks.
+            </p>
+          </div>
+          <div class="user-heading-actions">
+            <button id="add-user" class="primary" type="button">+ Add guest</button>
+            <button id="revoke-access_links" class="danger" type="button">
+              Revoke all guests
+            </button>
+          </div>
+        </div>
+
+        <div class="grant-heading">
+          <h3>Added guests</h3>
+          <span id="grant-count">0</span>
+        </div>
+        <div id="grant-list" class="grant-list"></div>
+
+        <div class="grant-heading revoked-heading">
+          <div>
+            <h3>Recently ended guests</h3>
+            <p>Revoked and expired guest records are retained for 30 days.</p>
+          </div>
+          <span id="revoked-count">0</span>
+        </div>
+        <div id="revoked-list" class="grant-list"></div>
+
+        <div class="grant-heading revoked-heading">
+          <div>
+            <h3>Security events</h3>
+            <p>Recent access denials and automatic protections. Tokens and IP addresses are not stored.</p>
+          </div>
+          <span id="security-event-count">0</span>
+        </div>
+        <div id="security-event-list" class="activity-list compact-activity"></div>
+      </section>
+    </section>
+    <footer class="app-footer">
+      <span>Powered by</span>
+      <a href="https://access_service.ai" target="_blank" rel="noopener noreferrer">
+        OpenNHP Service
+      </a>
+    </footer>
+  </main>
+
+  <dialog id="reset-dialog" class="reset-dialog">
+    <div class="reset-dialog-shell">
+      <header class="picker-header">
+        <div>
+          <p class="eyebrow">Security reset</p>
+          <h2>Reset OpenNHP Service connection?</h2>
+        </div>
+        <button id="close-reset-dialog" class="icon-button" type="button"
+                aria-label="Close reset dialog">×</button>
+      </header>
+      <div class="reset-dialog-content">
+        <p>This action will:</p>
+        <ul>
+          <li>Immediately revoke every existing guest and access link.</li>
+          <li>Attempt to remove the old AccessLinks from OpenNHP Service.</li>
+          <li>Remove this connector's credential, identity, and state.</li>
+          <li>Preserve all page names, descriptions, entities, and actions.</li>
+        </ul>
+        <p>
+          You will reconnect with an API key and create new guest links.
+          This cannot restore the old guests.
+        </p>
+        <label>
+          <span>Type <strong>RESET</strong> to continue</span>
+          <input id="reset-confirmation" autocomplete="off"
+                 spellcheck="false">
+        </label>
+        <div class="reset-dialog-actions">
+          <button id="cancel-reset" class="secondary" type="button">
+            Cancel
+          </button>
+          <button id="confirm-reset" class="danger" type="button" disabled>
+            Revoke guests and reset
+          </button>
+        </div>
+        <div id="reset-status" class="status" role="status"
+             aria-live="polite"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="user-dialog" class="user-dialog">
+    <div class="user-dialog-shell">
+      <header class="picker-header">
+        <div>
+          <p class="eyebrow">Secure access</p>
+          <h2>Add guest</h2>
+        </div>
+        <button id="close-user-dialog" class="icon-button" type="button"
+                aria-label="Close add guest">×</button>
+      </header>
+
+      <div class="user-dialog-content">
+        <p class="user-dialog-intro">
+          Create a NHP AccessLink for someone who should use this page.
+        </p>
+
+        <div class="access_link-builder">
+          <label class="wide">
+            <span>Guest name</span>
+            <input id="access_link-label" maxlength="120"
+                   placeholder="e.g. Alice" required>
+          </label>
+
+          <fieldset class="wide nhp-verification-fieldset">
+            <legend>NHP verification before access</legend>
+            <label class="wide">
+              <span>Verification method</span>
+              <select id="nhp-verification" aria-describedby="nhp-verification-help">
+                <option value="none">None — valid AccessLink opens directly</option>
+                <option value="google">Google sign-in</option>
+                <option value="email">Email code</option>
+              </select>
+            </label>
+            <p id="nhp-verification-help">NHP checks the AccessLink on the first knock. No additional verification is required.</p>
+            <label id="verification-email-field" class="wide hidden">
+              <span>Invited guest email</span>
+              <input id="verification-email" type="email" maxlength="254"
+                     autocomplete="email" placeholder="guest@example.com">
+            </label>
+            <small>When selected, verification must succeed before AC opens access to FRPS and the Guest Page. Google verifies the invited account. Email codes use your saved SMTP settings; without settings, the demo shows a simulated code.</small>
+          </fieldset>
+
+          <fieldset class="lifetime-fieldset">
+            <legend>Invitation lifetime</legend>
+            <div id="lifetime-options" class="lifetime-options">
+              <label><input type="radio" name="lifetime" value="1h" data-seconds="3600"><span>1 hour</span></label>
+              <label><input type="radio" name="lifetime" value="6h" data-seconds="21600"><span>6 hours</span></label>
+              <label><input type="radio" name="lifetime" value="24h" data-seconds="86400" checked><span>24 hours</span></label>
+              <label><input type="radio" name="lifetime" value="3d" data-seconds="259200"><span>3 days</span></label>
+              <label><input type="radio" name="lifetime" value="7d" data-seconds="604800"><span>7 days</span></label>
+              <label><input type="radio" name="lifetime" value="30d" data-seconds="2592000"><span>30 days</span></label>
+              <label><input type="radio" name="lifetime" value="custom"><span>Custom</span></label>
+            </div>
+            <div id="custom-lifetime" class="custom-lifetime hidden">
+              <label>
+                <span>Duration</span>
+                <input id="custom-lifetime-value" type="number" min="1"
+                       max="72" step="1" inputmode="numeric" value="1">
+              </label>
+              <label>
+                <span>Unit</span>
+                <select id="custom-lifetime-unit">
+                  <option value="m">Minutes</option>
+                  <option value="h" selected>Hours</option>
+                  <option value="d">Days</option>
+                </select>
+              </label>
+            </div>
+            <small id="lifetime-limit" class="lifetime-limit">
+              Maximum configured lifetime: 3 days.
+            </small>
+          </fieldset>
+
+          <label class="one-time-toggle">
+            <span>
+              <strong>One-time use</strong>
+              <small>Checked: this link works once. Unchecked: it works until expiry or revocation.</small>
+            </span>
+            <input id="one-time-use" type="checkbox" checked>
+          </label>
+
+          <label class="one-time-toggle hidden">
+            <span>
+              <strong>Require guest verification</strong>
+              <small id="verification-help">Send a one-time code to the guest before showing controls.</small>
+            </span>
+            <input id="verification-required" type="checkbox">
+          </label>
+          <label class="one-time-toggle">
+            <span>
+              <strong>Alert me about guest activity</strong>
+              <small>Create a Home Assistant notification when this guest first opens the link and whenever they use an entity.</small>
+            </span>
+            <input id="activity-notifications" type="checkbox">
+          </label>
+          <div id="activity-notification-options" class="wide hidden">
+            <fieldset>
+              <legend>Notify me through</legend>
+              <div id="notification-targets" class="lifetime-options"></div>
+              <button id="configure-notifications" class="secondary hidden" type="button">Configure alert options</button>
+            </fieldset>
+            <fieldset>
+              <legend>Notify me about</legend>
+              <div class="lifetime-options">
+                <label><input type="checkbox" name="notification-event" value="initial_login" checked><span>First successful login</span></label>
+                <label><input type="checkbox" name="notification-event" value="successful_action" checked><span>Every successful entity action</span></label>
+                <label><input type="checkbox" name="notification-event" value="failed_action"><span>Failed or blocked actions</span></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <button id="generate-access_link" class="primary" type="button">
+            Create guest link
+          </button>
+        </div>
+
+        <div id="access_link-result" class="access_link-result hidden" tabindex="-1"
+             role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="activity-dialog" class="user-dialog">
+    <div class="user-dialog-shell">
+      <header class="picker-header">
+        <div>
+          <p class="eyebrow">Guest activity</p>
+          <h2 id="activity-title">Activity</h2>
+        </div>
+        <button id="close-activity-dialog" class="icon-button" type="button"
+                aria-label="Close guest activity">×</button>
+      </header>
+      <div class="user-dialog-content">
+        <p id="activity-summary" class="user-dialog-intro"></p>
+        <div id="activity-list" class="activity-list"></div>
+        <button id="delete-activity" class="danger hidden" type="button">
+          Delete guest record
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="email-dialog" class="user-dialog">
+    <div class="user-dialog-shell">
+      <header class="picker-header">
+        <div>
+          <p class="eyebrow">Gateway email</p>
+          <h2>Email delivery & alerts</h2>
+        </div>
+        <button id="close-email-dialog" class="icon-button" type="button"
+                aria-label="Close email settings">×</button>
+      </header>
+      <form id="email-form" class="user-dialog-content email-form">
+        <p>
+          Configure your own email provider for verification messages and
+          administrator guest-activity alerts. The
+          password is stored locally, is never returned by the API, and is not
+          sent to OpenNHP Service or Home Assistant.
+        </p>
+        <div class="email-grid">
+          <label><span>SMTP host</span><input id="smtp-host" required autocomplete="off" placeholder="smtp.example.com"></label>
+          <label><span>Port</span><input id="smtp-port" required type="number" min="1" max="65535" value="587"></label>
+          <label><span>Security</span><select id="smtp-security"><option value="starttls">STARTTLS</option><option value="tls">Implicit TLS</option></select></label>
+          <label><span>Username</span><input id="smtp-username" required autocomplete="username"></label>
+          <label><span>Password / app password</span><input id="smtp-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved password"></label>
+          <label><span>Sender email</span><input id="smtp-sender-email" required type="email"></label>
+          <label><span>Sender name</span><input id="smtp-sender-name" required value="Access Pages"></label>
+          <label><span>Administrator alert email</span><input id="smtp-administrator-email" required type="email" placeholder="admin@example.com"></label>
+        </div>
+        <fieldset class="mobile-alert-config">
+          <legend>Mobile alert recipients</legend>
+          <p class="field-help">
+            Select the Home Assistant Companion App targets that may be offered
+            when creating a guest. Unselected devices remain unavailable.
+          </p>
+          <div id="alert-mobile-targets" class="mobile-alert-list"></div>
+        </fieldset>
+        <div class="email-actions">
+          <div id="email-status" class="status" role="status"></div>
+          <button id="save-email" class="primary" type="submit">Save settings</button>
+        </div>
+        <fieldset class="email-test">
+          <legend>Send a test</legend>
+          <label><span>Recipient</span><input id="smtp-test-recipient" type="email" placeholder="you@example.com"></label>
+          <button id="test-email" class="secondary" type="button">Send test email</button>
+        </fieldset>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="reset-dialog">
+    <div class="reset-dialog-shell">
+      <header class="picker-header">
+        <div>
+          <p class="eyebrow">Please confirm</p>
+          <h2>Confirm this action</h2>
+        </div>
+        <button id="close-confirm-dialog" class="icon-button" type="button"
+                aria-label="Cancel confirmation">×</button>
+      </header>
+      <div class="reset-dialog-content">
+        <p id="confirm-message"></p>
+        <div class="reset-dialog-actions">
+          <button id="cancel-confirm" class="secondary" type="button">
+            Cancel
+          </button>
+          <button id="accept-confirm" class="danger" type="button">
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="entity-picker" class="entity-picker">
+    <div class="picker-shell">
+      <header class="picker-header">
+        <div>
+          <p class="eyebrow">Home Assistant</p>
+          <h2>Add resources</h2>
+        </div>
+        <button id="close-picker" class="icon-button" type="button"
+                aria-label="Close entity picker">×</button>
+      </header>
+
+      <label class="picker-search">
+        <span class="sr-only">Search entities</span>
+        <input id="picker-search" type="search"
+               placeholder="Search by name, entity ID, state, or type">
+      </label>
+
+      <div class="picker-tabs" role="tablist" aria-label="Browse entities">
+        <button id="picker-target-tab" class="picker-tab" type="button"
+                role="tab" aria-selected="false">By target</button>
+        <button id="picker-type-tab" class="picker-tab active" type="button"
+                role="tab" aria-selected="true">By type</button>
+      </div>
+
+      <div class="picker-body">
+        <nav id="picker-types" class="picker-types"
+             aria-label="Entity types"></nav>
+        <section id="picker-results" class="picker-results"></section>
+      </div>
+
+      <footer class="picker-footer">
+        <span id="picker-policy"></span>
+        <button id="picker-done" class="primary" type="button">Done</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <script src="static/vendor/qrcodegen.js" defer></script>
+  <script type="module" src="static/admin.js?v=opennhp-cleanup-1"></script>
+</body>
+</html>

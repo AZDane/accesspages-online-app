@@ -1,0 +1,8 @@
+Access Pages Online beta app
+
+Uses OpenNHP and NHP-FRP, licensed under Apache License 2.0.
+OpenNHP revision: 819e1b31e8ad0f028fe1de41789d8bd6c5f1cd6d
+NHP-FRP revision: 2d9ad7d6fa0609fd973606b4b898e71c33854e0f
+The Guest Gateway includes MIT-licensed work copyright (c) 2026 LayerV.
+Its complete original license is retained at accesspages_online_test/rootfs/opt/accesspages-test/guest_gateway/LICENSE.
+This beta is not an upstream OpenNHP or LayerV release.
