@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import ssl
 import subprocess
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 from urllib.request import build_opener, HTTPSHandler, HTTPRedirectHandler
 
 from cryptography import x509
@@ -38,6 +38,22 @@ class Installation:
         self.root = Path(root)
         self.machine_dir = self.root/'machine'
         self.service_url = (service_url or os.getenv('NHP_SERVICE_URL', 'https://access.beta.accesspages.app')).rstrip('/')
+        parsed=urlparse(self.service_url)
+        if (parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or
+            parsed.path or parsed.params or parsed.query or parsed.fragment or
+            any(character.isspace() for character in self.service_url)):
+            raise ValueError('Service address must be an HTTPS origin')
+        if parsed.port is not None and not 1<=parsed.port<=65535:
+            raise ValueError('Invalid service port')
+        # Never send an enrolled identity to a newly configured authority.
+        binding_path=self.root/'binding.json'
+        if binding_path.exists():
+            binding=json.loads(binding_path.read_text())
+            saved=binding.get('service_url')
+            if saved is None and (self.root/'profile.json').exists():
+                saved=json.loads((self.root/'profile.json').read_text()).get('landing_origin')
+            if saved!=self.service_url:
+                raise ValueError('Service address does not match this enrolled installation')
         self.context = ssl.create_default_context(cafile=os.getenv('NHP_SERVICE_CA_FILE') or None)
 
     def operation(self, body, *, connector=False):
@@ -108,23 +124,19 @@ class Installation:
             binding['route']=route;atomic(binding_path,json.dumps(binding))
         return connector
 
-    def enroll(self, link):
-        parsed=urlparse(link)
-        expected=urlparse(self.service_url)
-        if parsed.scheme!='https' or parsed.netloc!=expected.netloc or parsed.path!='/enroll' or parsed.query:
-            raise ValueError('Use an enrollment link from this beta service')
-        values=parse_qs(parsed.fragment,strict_parsing=True)
-        if set(values)!={'gateway','bootstrap'} or any(len(v)!=1 for v in values.values()):
-            raise ValueError('Invalid enrollment link')
-        gid,bootstrap=values['gateway'][0],values['bootstrap'][0]
+    def enroll(self, credential):
+        if not isinstance(credential,str):raise ValueError('Invalid enrollment token')
+        credential=credential.strip()
         valid=lambda s:all(c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in s)
-        if not gid.startswith('gw_') or len(gid)!=46 or len(bootstrap)!=43 or not valid(gid+bootstrap):
-            raise ValueError('Invalid enrollment credential')
+        if len(credential)!=43 or not valid(credential):
+            raise ValueError('Invalid enrollment token')
+        gid,bootstrap=None,credential
         binding_path=self.root/'binding.json'
         if binding_path.exists():
             previous=json.loads(binding_path.read_text())
-            if previous['gateway_id']!=gid:
+            if gid is not None and previous['gateway_id'] is not None and previous['gateway_id']!=gid:
                 raise ValueError('This app already belongs to another installation')
+            gid=previous['gateway_id'] or gid
             if previous.get('state')=='enrolled':
                 try:route=self.operation({'op':'installation_status'})
                 except RuntimeError:
@@ -159,15 +171,16 @@ Port = 62206
         atomic(self.root/'profile.json',json.dumps(profile),0o644)
         # Persist the intended binding before REG. After a lost RAK/restart,
         # authenticated status proves successful prior enrollment without reuse.
-        atomic(binding_path,json.dumps({'gateway_id':gid,'state':'enrolling','bootstrap':bootstrap}))
+        atomic(binding_path,json.dumps({'gateway_id':gid,'state':'enrolling','bootstrap':bootstrap,'service_url':self.service_url}))
         try:
             route=self.operation({'op':'installation_status'})
         except RuntimeError:
-            self.operation({'op':'bind','gateway_id':gid,'bootstrap':bootstrap})
+            self.operation({'op':'bind','gateway_id':gid or 'gateway-registration','bootstrap':bootstrap})
             route=self.operation({'op':'installation_status'})
-        if route.get('gateway_id')!=gid:
+        actual=route.get('gateway_id','')
+        if not actual.startswith('gw_') or len(actual)!=46 or not valid(actual) or (gid is not None and actual!=gid):
             raise ValueError('Gateway identity mismatch')
-        atomic(binding_path,json.dumps({'gateway_id':gid,'state':'enrolled','route':route}))
+        atomic(binding_path,json.dumps({'gateway_id':actual,'state':'enrolled','route':route,'service_url':self.service_url}))
         self.ensure_connector()
         return route
 
@@ -178,11 +191,12 @@ Port = 62206
         try:
             route=self.operation({'op':'installation_status'})
         except RuntimeError:
-            self.operation({'op':'bind','gateway_id':binding['gateway_id'],'bootstrap':binding['bootstrap']})
+            self.operation({'op':'bind','gateway_id':binding['gateway_id'] or 'gateway-registration','bootstrap':binding['bootstrap']})
             route=self.operation({'op':'installation_status'})
-        if route.get('gateway_id')!=binding['gateway_id']:
+        actual=route.get('gateway_id','')
+        if not actual.startswith('gw_') or len(actual)!=46 or (binding['gateway_id'] is not None and actual!=binding['gateway_id']):
             raise ValueError('Gateway identity mismatch')
-        binding={'gateway_id':binding['gateway_id'],'state':'enrolled','route':route}
+        binding={'gateway_id':actual,'state':'enrolled','route':route,'service_url':self.service_url}
         atomic(path,json.dumps(binding))
         return binding
 

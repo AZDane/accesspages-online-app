@@ -1,5 +1,5 @@
 """Optional NHP transport for the existing Admin and Guest Pages boundaries."""
-import base64, hashlib, json, os, secrets, sqlite3, subprocess, time
+import base64, hashlib, json, os, re, secrets, sqlite3, subprocess, time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timezone
@@ -52,6 +52,11 @@ def db(name):
     conn=sqlite3.connect(path,timeout=10);conn.row_factory=sqlite3.Row
     return conn
 
+def access_credential(link):
+    fragment=urlparse(link).fragment
+    if re.fullmatch(r'[A-Za-z0-9_-]{43}',fragment):return fragment
+    raise AccessServiceError('Invalid AccessLink returned by the service')
+
 class NHPClient:
     configured=True
     resource_id=RESOURCE
@@ -63,7 +68,7 @@ class NHPClient:
         ttl=int(expires_in[:-1])*{'m':60,'h':3600,'d':86400,'w':604800}[expires_in[-1]]
         if not 1<=ttl<=86400:raise AccessServiceError('NHP demo invitations support up to 24 hours')
         result=machine({'op':'mint_access_link','guest_token':token,'resource':resource,'ttl':ttl,'one_time_use':one_time_use,'verification_method':verification_method,'verification_email':verification_email})
-        secret=parse_qs(urlparse(result['access_link']).fragment)['access'][0]
+        secret=access_credential(result['access_link'])
         ident=hashlib.sha256(secret.encode()).hexdigest()
         with db('nhp-links') as c:
             c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY, secret TEXT NOT NULL)')

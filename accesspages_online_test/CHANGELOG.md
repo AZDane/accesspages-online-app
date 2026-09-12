@@ -1,3 +1,10 @@
+# 0.1.0-beta.5
+
+- Generate shorter guest AccessLinks containing only `/#<token>`; the service resolves the assigned resource.
+- Accept a one-use enrollment API token and configure the Service address on the app's Configuration page.
+- Use the new opaque AccessLink and raw enrollment-token formats. Create fresh pages and guests when testing this beta. Enrolled identities remain bound to their original service address.
+- Preserve demo-only device data, native NHP authentication and the separate management and connector identities.
+
 # 0.1.0-beta.4
 
 - Fix startup under the app's enforced AppArmor profile by allowing package-directory reads and data-directory setup. App code remains read-only under the profile.

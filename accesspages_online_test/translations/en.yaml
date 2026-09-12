@@ -1,0 +1,4 @@
+configuration:
+  service_url:
+    name: Service address
+    description: HTTPS address of your OpenNHP Service. Set this before enrollment; an enrolled identity remains bound to its original service.

@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import http.client
+import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -25,6 +26,17 @@ USERS={'admin':1001,'guest':1002,'broker':1003,'tls':1004,'connector':1005}
 # The installable NHP test app includes this immutable marker. Live-HA lab
 # fixtures omit it; injected credentials cannot switch the test app to live HA.
 DEMO_DATA=(APP/'demo-data').is_file()
+
+def configured_service_url():
+    if os.getenv('NHP_SERVICE_URL'):return os.environ['NHP_SERVICE_URL']
+    path=ROOT/'options.json'
+    if not path.exists():return None
+    options=json.loads(path.read_text())
+    if not isinstance(options,dict):raise ValueError('Invalid app configuration')
+    value=options.get('service_url')
+    if value is not None and (not isinstance(value,str) or not value.strip()):
+        raise ValueError('Invalid service address')
+    return value.strip() if value else None
 
 
 def broker_backend_environment():
@@ -56,10 +68,10 @@ class Runtime:
                 child.chmod(0o700 if child.is_dir() or child==ROOT/'connector/frpc' else 0o600)
         (ROOT/'public').mkdir(exist_ok=True,mode=0o755)
         (ROOT/'public').chmod(0o755)
-        self.installation=Installation(ROOT/'admin/installation')
+        self.installation=Installation(ROOT/'admin/installation',service_url=configured_service_url())
         self.lock=threading.RLock();self.children={};self.started={};self.stopping=False
         self.csrf=secrets.token_urlsafe(32)
-        self.message='Paste the enrollment link to connect this Home Assistant.'
+        self.message='Paste the enrollment API token to connect this Home Assistant.'
         self.admin_token=self.secret('admin-token')
         self.broker_admin=self.secret('broker-admin-token')
         self.broker_unused=self.secret('broker-unused-token')
@@ -281,14 +293,16 @@ class Ingress(BaseHTTPRequestHandler):
             path=urlparse(self.path).path
             if path=='/setup/status':self.send(200,runtime.public_status());return
             if path=='/setup/enroll' and self.command=='POST':
-                value=json.loads(body);self.send(200,runtime.enroll(value['enrollment_link']));return
+                value=json.loads(body)
+                if not isinstance(value,dict) or set(value)!={'enrollment_token'}:raise ValueError()
+                self.send(200,runtime.enroll(value['enrollment_token']));return
             if self.command=='GET' and not runtime.public_status()['ready']:
                 if path.startswith('/api/'):
                     self.send(503,{'error':'Application is starting'});return
-                html=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf)
+                markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.service_url))
                 if DEMO_DATA:
-                    html=html.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')
-                self.send(200,html.encode(),'text/html; charset=utf-8');return
+                    markup=markup.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')
+                self.send(200,markup.encode(),'text/html; charset=utf-8');return
             target='/admin' if path=='/' else self.path
             connection=http.client.HTTPConnection('127.0.0.1',8081,timeout=40)
             try:
@@ -302,7 +316,7 @@ class Ingress(BaseHTTPRequestHandler):
                         payload=payload.replace(b'<body>', b'<body><p role="note" style="padding:12px;text-align:center">NHP test: demo data only. No Home Assistant device access. Demo actions reset when the app restarts.</p>')
                 self.send(response.status,payload,kind)
             finally:connection.close()
-        except Exception:self.send(400,{'error':'Operation failed. Check the enrollment link and service connection.'})
+        except Exception:self.send(400,{'error':'Operation failed. Check the enrollment token and service connection.'})
     do_GET=handle_request
     do_POST=handle_request
     do_PUT=handle_request

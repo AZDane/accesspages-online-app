@@ -20,14 +20,14 @@ to child processes. Supplying an HA token cannot enable live-device access.
 ## Enrollment
 
 1. The beta operator provisions an installation in OpenNHP Service and supplies
-   its owner with a private, expiring enrollment link.
+   its owner with a private, expiring enrollment API token.
 2. Start the app, open it through HA Ingress and paste that link.
 3. The app generates its own Gateway identity and completes native REG/RAK. It
    registers a separate connector identity and receives its allocated route.
 4. The app generates a private TLS key locally and submits only a CSR for its
    certificate. It then starts its outbound connector and local Admin interface.
 
-Keep enrollment links private: they are one-use bootstrap credentials. The app
+Set the Service address on the app’s Configuration page before enrollment. Keep enrollment API tokens private: they are one-use bootstrap credentials. Once enrolled, keep the original service address; changing it does not transfer an identity to another service. The app
 retains its keys in its private data directory and can recover an interrupted
 enrollment using the saved identity. Deleting app data requires operator
 revocation and enrollment of a replacement installation.
