@@ -6,10 +6,12 @@ const {chromium} = require('playwright');
 const crypto = require('node:crypto');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const tls = require('node:tls');
 
 const landing = 'https://access.beta.accesspages.app';
 const report = {started: new Date().toISOString(), tests: [], transport: {relay_responses: 0, handoff_responses: [], page_data_responses: [], request_failures: []}};
 let stage = 'input validation', browser;
+let destinations = [];
 let reported = false;
 function finishReport() {
   if (reported) return;
@@ -40,6 +42,32 @@ function tcpReachable(address, port) {
 }
 function cookieName(resource) {
   return '__Host-nhp_guest_' + crypto.createHash('sha256').update(resource).digest('hex').slice(0, 24);
+}
+function tlsHealth(item) {
+  return new Promise(resolve => {
+    const result = {installation: item.label, tcp_connected: false, tls_verified: false};
+    let complete = false, header = '';
+    const connection = tls.connect({host: item.address, port: item.port,
+      servername: new URL(item.expected_origin).hostname, rejectUnauthorized: true});
+    const finish = () => {
+      if (complete) return;
+      complete = true; clearTimeout(timer); connection.destroy(); resolve(result);
+    };
+    const timer = setTimeout(() => {result.timed_out = true; finish();}, 10000);
+    connection.once('connect', () => {result.tcp_connected = true;});
+    connection.once('secureConnect', () => {
+      result.tls_verified = connection.authorized;
+      connection.write('GET /health HTTP/1.1\r\nHost: ' + new URL(item.expected_origin).host + '\r\nConnection: close\r\n\r\n');
+    });
+    connection.on('data', data => {
+      header += data.toString('utf8').slice(0, 64);
+      const match = header.match(/^HTTP\/1\.[01] (\d{3}) /);
+      if (match) {result.http_status = Number(match[1]); finish();}
+      else if (header.length > 128) finish();
+    });
+    connection.once('error', error => {result.error_code = /^[A-Z_0-9]+$/.test(error.code || '') ? error.code : 'CONNECTION_ERROR'; finish();});
+    connection.once('end', finish);
+  });
 }
 async function readPage(page, resource) {
   return page.evaluate(async resource => {
@@ -81,6 +109,7 @@ async function navigateStatus(profile, url) {
     item.port = Number(destination.port);
   }
   check('Two different installations supplied', new Set(inputs.map(i => i.expected_origin)).size === 2 && new Set(inputs.map(i => i.label)).size === 2);
+  destinations = inputs;
   stage = 'unadmitted network baseline';
   for (const item of inputs) check(item.label + ': guest port unreachable before admission', !await tcpReachable(item.address, item.port));
 
@@ -119,6 +148,7 @@ async function navigateStatus(profile, url) {
     page.on('request', request => {
       const url = new URL(request.url());
       if (url.origin === item.expected_origin && url.pathname === '/handoff') {
+        item.handoff_attempted = true;
         guest.handoff = new URLSearchParams(request.postData() || '').get('nhp_token');
         if (guest.handoff) {
           mask(guest.handoff);
@@ -185,10 +215,11 @@ async function navigateStatus(profile, url) {
   }
   check('Real Browser NHP Relay traffic was observed', report.transport.relay_responses > 0);
   report.passed = true;
-})().catch(error => {
+})().catch(async error => {
   report.passed = false;
   report.failure = {stage, type: error.name, codes: [...new Set(error.message?.match(/net::ERR_[A-Z_]+|ECONN[A-Z]+|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/g) || [])]};
   process.exitCode = 1;
+  report.connection_diagnostics = await Promise.all(destinations.filter(item => item.handoff_attempted).map(tlsHealth));
 }).finally(async () => {
   finishReport();
   if (browser) await Promise.race([browser.close().catch(() => {}), new Promise(resolve => setTimeout(resolve, 5000))]);
