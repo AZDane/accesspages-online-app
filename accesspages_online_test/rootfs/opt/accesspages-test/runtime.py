@@ -27,15 +27,15 @@ USERS={'admin':1001,'guest':1002,'broker':1003,'tls':1004,'connector':1005}
 # fixtures omit it; injected credentials cannot switch the test app to live HA.
 DEMO_DATA=(APP/'demo-data').is_file()
 
-def configured_service_url():
-    if os.getenv('NHP_SERVICE_URL'):return os.environ['NHP_SERVICE_URL']
+def configured_server_address():
+    if os.getenv('NHP_SERVER_ADDRESS'):return os.environ['NHP_SERVER_ADDRESS']
     path=ROOT/'options.json'
     if not path.exists():return None
     options=json.loads(path.read_text())
     if not isinstance(options,dict):raise ValueError('Invalid app configuration')
-    value=options.get('service_url')
+    value=options.get('server_address')
     if value is not None and (not isinstance(value,str) or not value.strip()):
-        raise ValueError('Invalid service address')
+        raise ValueError('Invalid NHP Server address')
     return value.strip() if value else None
 
 
@@ -68,7 +68,7 @@ class Runtime:
                 child.chmod(0o700 if child.is_dir() or child==ROOT/'connector/frpc' else 0o600)
         (ROOT/'public').mkdir(exist_ok=True,mode=0o755)
         (ROOT/'public').chmod(0o755)
-        self.installation=Installation(ROOT/'admin/installation',service_url=configured_service_url())
+        self.installation=Installation(ROOT/'admin/installation',server_address=configured_server_address())
         self.lock=threading.RLock();self.children={};self.started={};self.stopping=False
         self.csrf=secrets.token_urlsafe(32)
         self.message='Paste the enrollment API token to connect this Home Assistant.'
@@ -299,7 +299,7 @@ class Ingress(BaseHTTPRequestHandler):
             if self.command=='GET' and not runtime.public_status()['ready']:
                 if path.startswith('/api/'):
                     self.send(503,{'error':'Application is starting'});return
-                markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.service_url))
+                markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.server_address))
                 if DEMO_DATA:
                     markup=markup.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')
                 self.send(200,markup.encode(),'text/html; charset=utf-8');return

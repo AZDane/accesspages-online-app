@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "landing_origin": "https://access.beta.accesspages.app",
+  "server_host": "nhp.beta.accesspages.app",
+  "server_port": 62206,
+  "server_public_key": "6ItuHV/FhhUOkaF5MBS6Mfcn20CRXoo62k/yf333vjk=",
+  "handoff_public_key": "wmjiXPKxwdqqbnEN3FyvhroIPWwQYgV1ucDpn6YZXzc=",
+  "control_certificate": "-----BEGIN CERTIFICATE-----\nMIIBfDCCASKgAwIBAgIUQIzDutzVHBcQi1wCbdaxdKP8RrQwCgYIKoZIzj0EAwIw\nKjEoMCYGA1UEAwwfQWNjZXNzIFBhZ2VzIHByaXZhdGUgc2VydmljZSBDQTAeFw0y\nNjA5MTIwOTE3NDhaFw0zNjA5MDkwOTIyNDhaMCoxKDAmBgNVBAMMH0FjY2VzcyBQ\nYWdlcyBwcml2YXRlIHNlcnZpY2UgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC\nAAQ8NZDz/DkoTGbFk14KAyHzCMIj6pxyBOY5ajyVZCOtG79nto3rscIIuBzrb8jB\niqPITFX1oMzv7AfFO3gWsCaBoyYwJDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1Ud\nDwEB/wQEAwIBBjAKBggqhkjOPQQDAgNIADBFAiEAmKm18xna3vBATKJpVjh4tHJl\nIdwMh4018pfIRoss8yECIHBpzshvOAq/xP71Az+P+j223S9u0pLFq4EXJPYrYCbW\n-----END CERTIFICATE-----\n",
+  "frp_certificate": "-----BEGIN CERTIFICATE-----\nMIIBfDCCASKgAwIBAgIUQIzDutzVHBcQi1wCbdaxdKP8RrQwCgYIKoZIzj0EAwIw\nKjEoMCYGA1UEAwwfQWNjZXNzIFBhZ2VzIHByaXZhdGUgc2VydmljZSBDQTAeFw0y\nNjA5MTIwOTE3NDhaFw0zNjA5MDkwOTIyNDhaMCoxKDAmBgNVBAMMH0FjY2VzcyBQ\nYWdlcyBwcml2YXRlIHNlcnZpY2UgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC\nAAQ8NZDz/DkoTGbFk14KAyHzCMIj6pxyBOY5ajyVZCOtG79nto3rscIIuBzrb8jB\niqPITFX1oMzv7AfFO3gWsCaBoyYwJDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1Ud\nDwEB/wQEAwIBBjAKBggqhkjOPQQDAgNIADBFAiEAmKm18xna3vBATKJpVjh4tHJl\nIdwMh4018pfIRoss8yECIHBpzshvOAq/xP71Az+P+j223S9u0pLFq4EXJPYrYCbW\n-----END CERTIFICATE-----\n"
+}

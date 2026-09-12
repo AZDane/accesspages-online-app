@@ -3,19 +3,12 @@ import base64
 import json
 import os
 from pathlib import Path
-import ssl
 import subprocess
 from urllib.parse import urlparse
-from urllib.request import build_opener, HTTPSHandler, HTTPRedirectHandler
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
-
-
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise ValueError('Unexpected profile redirect')
 
 
 def atomic(path, value, mode=0o600):
@@ -34,42 +27,40 @@ def atomic(path, value, mode=0o600):
 
 
 class Installation:
-    def __init__(self, root, service_url=None):
+    def __init__(self, root, server_address=None):
         self.root = Path(root)
         self.machine_dir = self.root/'machine'
-        self.service_url = (service_url or os.getenv('NHP_SERVICE_URL', 'https://relay.beta.accesspages.app')).rstrip('/')
-        parsed=urlparse(self.service_url)
-        if (parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or
-            parsed.path or parsed.params or parsed.query or parsed.fragment or
-            any(character.isspace() for character in self.service_url)):
-            raise ValueError('Service address must be an HTTPS origin')
-        if parsed.port is not None and not 1<=parsed.port<=65535:
-            raise ValueError('Invalid service port')
-        self.context = ssl.create_default_context(cafile=os.getenv('NHP_SERVICE_CA_FILE') or None)
-        # Never send an enrolled identity to a newly configured authority.
-        binding_path=self.root/'binding.json'
+        self.bootstrap_path = Path(os.getenv('NHP_BOOTSTRAP_FILE', str(Path(__file__).with_name('bootstrap.json'))))
+        profile = self.profile()
+        expected = profile['server_host'] + ':' + str(profile['server_port'])
+        self.server_address = server_address or os.getenv('NHP_SERVER_ADDRESS') or expected
+        # An address selects a pinned native authority, never an HTTP discovery endpoint.
+        if self.server_address != expected:
+            raise ValueError('NHP Server address does not match the trusted bootstrap settings')
+        binding_path = self.root/'binding.json'
         if binding_path.exists():
-            binding=json.loads(binding_path.read_text())
-            saved=binding.get('service_url')
-            if saved is None and (self.root/'profile.json').exists():
-                saved=json.loads((self.root/'profile.json').read_text()).get('landing_origin')
-            if saved!=self.service_url:
-                self.migrate_discovery_origin(binding, saved)
+            binding = json.loads(binding_path.read_text())
+            if 'server_address' in binding:
+                if binding['server_address'] != self.server_address:
+                    raise ValueError('NHP Server address does not match this enrolled installation')
+            else:
+                self.migrate_binding(binding, profile)
 
-    def migrate_discovery_origin(self, binding, saved):
-        """Move this beta's discovery origin only when every trust anchor matches."""
-        if (saved, self.service_url) != ('https://access.beta.accesspages.app', 'https://relay.beta.accesspages.app'):
-            raise ValueError('Service address does not match this enrolled installation')
-        previous=json.loads((self.root/'profile.json').read_text())
-        current=self.profile()  # Public HTTPS discovery only; no NHP identity or bootstrap is sent.
-        anchors=('server_public_key','handoff_public_key','control_certificate','frp_certificate')
-        if any(not previous.get(name) or previous[name]!=current.get(name) for name in anchors):
-            raise ValueError('Service discovery migration changed an authority key')
-        if current['landing_origin']!=saved:
-            raise ValueError('Service discovery migration changed the guest landing')
-        binding['service_url']=self.service_url
-        atomic(self.root/'binding.json',json.dumps(binding))
-        atomic(self.root/'profile.json',json.dumps(current),0o644)
+    def migrate_binding(self, binding, current):
+        """Preserve existing keys only when packaged bootstrap matches saved trust."""
+        previous = json.loads((self.root/'profile.json').read_text())
+        saved = binding.get('service_url', previous.get('landing_origin'))
+        if not saved or saved not in (previous.get('landing_origin'), previous.get('service_origin')):
+            raise ValueError('Saved service address does not match this enrolled installation')
+        anchors = ('server_public_key', 'handoff_public_key', 'control_certificate', 'frp_certificate')
+        if any(not previous.get(name) or previous[name] != current.get(name) for name in anchors):
+            raise ValueError('Native bootstrap settings changed an authority key')
+        if previous.get('landing_origin') != current['landing_origin']:
+            raise ValueError('Native bootstrap settings changed the guest landing')
+        binding.pop('service_url', None)
+        binding['server_address'] = self.server_address
+        atomic(self.root/'binding.json', json.dumps(binding))
+        atomic(self.root/'profile.json', json.dumps(current), 0o644)
 
     def operation(self, body, *, connector=False):
         result = subprocess.run(['/opt/machinectl'], input=json.dumps(body),
@@ -83,33 +74,34 @@ class Installation:
         return value
 
     def profile(self):
-        opener = build_opener(HTTPSHandler(context=self.context), NoRedirect())
-        with opener.open(self.service_url+'/installation.json', timeout=10) as response:
-            if response.geturl() != self.service_url+'/installation.json':
-                raise ValueError('Unexpected profile redirect')
-            raw = response.read(16385)
-        if len(raw)>16384:
-            raise ValueError('Invalid installation profile')
-        profile=json.loads(raw)
-        if profile.get('version')!=2 or profile.get('service_origin')!=self.service_url or profile.get('server_port')!=62206:
-            raise ValueError('Unsupported installation service')
-        landing=urlparse(profile.get('landing_origin',''))
-        if (landing.scheme!='https' or not landing.hostname or landing.username or landing.password or
+        """Read public trust settings shipped with the app; no network discovery."""
+        raw = self.bootstrap_path.read_bytes()
+        if len(raw) > 16384:
+            raise ValueError('Invalid NHP bootstrap settings')
+        profile = json.loads(raw)
+        fields = {'version', 'landing_origin', 'server_host', 'server_port',
+                  'server_public_key', 'handoff_public_key', 'control_certificate', 'frp_certificate'}
+        if not isinstance(profile, dict) or set(profile) != fields or profile.get('version') != 3 or profile.get('server_port') != 62206:
+            raise ValueError('Unsupported NHP bootstrap settings')
+        landing = urlparse(profile.get('landing_origin', ''))
+        if (landing.scheme != 'https' or not landing.hostname or landing.username or landing.password or
             landing.path or landing.params or landing.query or landing.fragment or
-            landing.geturl()==self.service_url or any(c.isspace() for c in landing.geturl()) or
-            (landing.port is not None and not 1<=landing.port<=65535)):
+            any(c.isspace() for c in landing.geturl()) or
+            (landing.port is not None and not 1 <= landing.port <= 65535)):
             raise ValueError('Invalid guest landing origin')
-        for field in ('server_public_key','handoff_public_key'):
-            if len(base64.b64decode(profile[field],validate=True))!=32:
+        for field in ('server_public_key', 'handoff_public_key'):
+            if len(base64.b64decode(profile[field], validate=True)) != 32:
                 raise ValueError('Invalid service public key')
-        for field in ('control_certificate','frp_certificate'):
+        for field in ('control_certificate', 'frp_certificate'):
             x509.load_pem_x509_certificate(profile[field].encode())
-        if not isinstance(profile.get('server_host'),str) or len(profile['server_host'])>253:
+        host = profile.get('server_host')
+        if (not isinstance(host, str) or not host or len(host) > 253 or
+            any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-' for c in host)):
             raise ValueError('Invalid NHP Server address')
         return profile
 
     def refresh_authority(self):
-        """Refresh public verification material through the trusted HTTPS origin."""
+        """Apply the public verification settings from the installed app release."""
         profile=self.profile()
         for target,value,mode in (
             (self.machine_dir/'control.crt',profile['control_certificate'],0o644),
@@ -192,7 +184,7 @@ Port = 62206
         atomic(self.root/'profile.json',json.dumps(profile),0o644)
         # Persist the intended binding before REG. After a lost RAK/restart,
         # authenticated status proves successful prior enrollment without reuse.
-        atomic(binding_path,json.dumps({'gateway_id':gid,'state':'enrolling','bootstrap':bootstrap,'service_url':self.service_url}))
+        atomic(binding_path,json.dumps({'gateway_id':gid,'state':'enrolling','bootstrap':bootstrap,'server_address':self.server_address}))
         try:
             route=self.operation({'op':'installation_status'})
         except RuntimeError:
@@ -201,7 +193,7 @@ Port = 62206
         actual=route.get('gateway_id','')
         if not actual.startswith('gw_') or len(actual)!=46 or not valid(actual) or (gid is not None and actual!=gid):
             raise ValueError('Gateway identity mismatch')
-        atomic(binding_path,json.dumps({'gateway_id':actual,'state':'enrolled','route':route,'service_url':self.service_url}))
+        atomic(binding_path,json.dumps({'gateway_id':actual,'state':'enrolled','route':route,'server_address':self.server_address}))
         self.ensure_connector()
         return route
 
@@ -217,7 +209,7 @@ Port = 62206
         actual=route.get('gateway_id','')
         if not actual.startswith('gw_') or len(actual)!=46 or (binding['gateway_id'] is not None and actual!=binding['gateway_id']):
             raise ValueError('Gateway identity mismatch')
-        binding={'gateway_id':actual,'state':'enrolled','route':route,'service_url':self.service_url}
+        binding={'gateway_id':actual,'state':'enrolled','route':route,'server_address':self.server_address}
         atomic(path,json.dumps(binding))
         return binding
 

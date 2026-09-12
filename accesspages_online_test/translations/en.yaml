@@ -1,4 +1,4 @@
 configuration:
-  service_url:
-    name: Service address
-    description: HTTPS address of your OpenNHP Service. Set this before enrollment; an enrolled identity remains bound to its original service.
+  server_address:
+    name: NHP Server address
+    description: Native OpenNHP Server address and UDP port. Must match the public bootstrap settings shipped with this beta app.

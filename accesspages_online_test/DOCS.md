@@ -6,8 +6,10 @@ It uses built-in demo devices so that NHP can be tested without HA credentials.
 
 ## Configuration
 
-Set the Service address on the app's Configuration page to `https://relay.beta.accesspages.app` for this beta. The app obtains its
-route and tunnel credentials from that service during enrollment.
+Set NHP Server address on the app's Configuration page to `nhp.beta.accesspages.app:62206`.
+The app ships with the beta's public NHP bootstrap settings and does not fetch an
+HTTPS discovery document. It enrolls through native REG/RAK, then obtains its route,
+tunnel credentials and certificates through NHP-authorized operations.
 Select the demo door, light or temperature sensor and permitted actions when
 creating each page in Admin. Actions change only in-memory demo data; restarting
 the app resets device states but preserves pages, identities and invitations.
@@ -28,7 +30,7 @@ to child processes. Supplying an HA token cannot enable live-device access.
 4. The app generates a private TLS key locally and submits only a CSR for its
    certificate. It then starts its outbound connector and local Admin interface.
 
-Set the Service address on the app’s Configuration page before enrollment. Keep enrollment API tokens private: they are one-use bootstrap credentials. Once enrolled, keep the original service address; changing it does not transfer an identity to another service. The app
+Set the NHP Server address on the app’s Configuration page before enrollment. Keep enrollment API tokens private: they are one-use bootstrap credentials. The configured address must match the public trust settings shipped with this beta. Changing it does not transfer an identity to another service. The app
 retains its keys in its private data directory and can recover an interrupted
 enrollment using the saved identity. Deleting app data requires operator
 revocation and enrollment of a replacement installation.
@@ -42,7 +44,17 @@ followed by a signed, one-use handoff to the customer's Guest Gateway.
 
 Beta.5 uses `/#<token>` invitations and rejects the earlier named-parameter link
 format. After updating, create fresh demo pages and guests for acceptance testing.
-For beta.6, also change Service address to `https://relay.beta.accesspages.app`. The app verifies that the new address has exactly the same saved NHP public key, handoff key and certificate authorities before preserving its enrolled identity. No new bootstrap is needed. Guest invitations still start at `https://access.beta.accesspages.app`.
+Beta.7 replaces HTTPS discovery with packaged public bootstrap settings. Update the
+app and use NHP Server address `nhp.beta.accesspages.app:62206`. Keep app data; the
+app preserves the enrolled identity only if all previously saved NHP/signing keys
+and certificate authorities match. No new enrollment token is needed. The obsolete
+Service address option is no longer used. Guest invitations still start at
+`https://access.beta.accesspages.app`.
+
+Bootstrap settings contain public keys and CA certificates, never private keys or
+API credentials. Changing those bootstrap trust anchors requires a reviewed app
+update. Customer routes, tunnel credentials, certificates and invitation creation
+remain authenticated operations behind NHP admission.
 
 All pages use one installation endpoint; their grants and sessions remain
 separate. Revocation in Admin removes the local grant and revokes its hosted

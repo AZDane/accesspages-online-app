@@ -1,3 +1,11 @@
+# 0.1.0-beta.7
+
+- Remove public HTTPS discovery. Start with the native NHP Server address and public trust settings shipped with the app.
+- Use NHP Server address `nhp.beta.accesspages.app:62206`; the old HTTPS Service address option is no longer used.
+- Keep registration on native REG/RAK and route, tunnel, certificate and invitation operations behind NHP admission.
+- Preserve enrolled keys when the saved authority matches the packaged bootstrap settings. Keep app data; no new enrollment token is needed.
+- Keep enrollment tokens one-use, remove them after confirmation, and retain `/#<token>` guest invitations.
+
 # 0.1.0-beta.6
 
 - Separate the Service discovery address from the guest AccessLink website.

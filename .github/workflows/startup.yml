@@ -2,7 +2,7 @@ name: App startup
 
 on:
   push:
-    branches: [main, diagnose/ha-startup, beta/opaque-links, beta/service-entry]
+    branches: [main, diagnose/ha-startup, beta/opaque-links, beta/service-entry, beta/native-bootstrap]
   pull_request:
 
 permissions:
