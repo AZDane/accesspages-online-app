@@ -1,3 +1,10 @@
+# 0.1.0-beta.4
+
+- Fix startup under the app's enforced AppArmor profile by allowing package-directory reads and data-directory setup. App code remains read-only under the profile.
+- Remove Home Assistant API access. Use a built-in demo lock, light and temperature sensor for NHP tests, without HA credentials or live-device actions.
+- Keep the real native enrollment, NHP admission, NHP-FRP, TLS and page authorization paths. Demo device states reset on restart; stored identities and pages are preserved.
+- Add GitHub-hosted startup and demo-backend checks with networking isolated and AppArmor enforced.
+
 # 0.1.0-beta.3
 
 - Accept signed handoff issue timestamps up to five seconds ahead to accommodate clock differences. Signature, destination, replay and expiration checks remain enforced.

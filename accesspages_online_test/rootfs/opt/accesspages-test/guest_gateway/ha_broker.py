@@ -26,10 +26,14 @@ PAGE_STORE = PageStore(Path(os.getenv("HA_BROKER_POLICY_DIR", "/policy")))
 PAGE_CAPABILITY_REGISTRY = Path(os.getenv(
     "HA_PAGE_CAPABILITY_REGISTRY", "/policy-capabilities/page-capabilities.json"
 ))
-HA_CLIENT = HomeAssistantClient(
-    os.environ["HA_BASE_URL"],
-    os.environ["HA_TOKEN"],
-)
+BACKEND = os.getenv("HA_BROKER_BACKEND", "homeassistant")
+if BACKEND == "demo":
+    from demo_ha import DemoHomeAssistantClient
+    HA_CLIENT = DemoHomeAssistantClient()
+elif BACKEND == "homeassistant":
+    HA_CLIENT = HomeAssistantClient(os.environ["HA_BASE_URL"], os.environ["HA_TOKEN"])
+else:
+    raise RuntimeError("Unknown device data backend")
 
 
 class BrokerPolicyError(ValueError):

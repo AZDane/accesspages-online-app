@@ -22,6 +22,20 @@ APP=Path(__file__).resolve().parent
 GATEWAY=APP/'guest_gateway'
 GROUP=2000
 USERS={'admin':1001,'guest':1002,'broker':1003,'tls':1004,'connector':1005}
+# The installable NHP test app includes this immutable marker. Live-HA lab
+# fixtures omit it; injected credentials cannot switch the test app to live HA.
+DEMO_DATA=(APP/'demo-data').is_file()
+
+
+def broker_backend_environment():
+    if DEMO_DATA:
+        return {'HA_BROKER_BACKEND':'demo'}
+    ha_token=os.getenv('HA_TOKEN') or os.getenv('SUPERVISOR_TOKEN')
+    if os.getenv('HA_TOKEN_FILE'):
+        ha_token=Path(os.environ['HA_TOKEN_FILE']).read_text().strip()
+    if not ha_token:raise RuntimeError('Home Assistant credentials unavailable')
+    return {'HA_BROKER_BACKEND':'homeassistant',
+            'HA_BASE_URL':os.getenv('HA_BASE_URL','http://supervisor/core'),'HA_TOKEN':ha_token}
 
 
 class Runtime:
@@ -94,7 +108,7 @@ class Runtime:
         if ready:ready=self.connector_ready()
         message='Starting local app services.' if not ready and self.message.startswith('Ready') else self.message
         return {'message':message,'enrolled':(self.installation.root/'binding.json').exists(),
-                'ready':bool(ready)}
+                'ready':bool(ready),'device_data':'demo' if DEMO_DATA else 'homeassistant'}
 
     def connector_ready(self):
         connection=http.client.HTTPConnection('127.0.0.1',8084,timeout=0.5)
@@ -161,16 +175,11 @@ class Runtime:
                 'NHP_VERIFY_KEY_FILE':str(ROOT/'public/handoff-public-key'),
                 'HOST':'127.0.0.1','ACCESS_LINK_MAX_LIFETIME_DAYS':'1',
                 'PAGE_FILE_MODE':'640','HA_BROKER_URL':'http://127.0.0.1:8083'}
-        self.phase='Home Assistant connection'
-        base_url=os.getenv('HA_BASE_URL','http://supervisor/core')
-        ha_token=os.getenv('HA_TOKEN') or os.getenv('SUPERVISOR_TOKEN')
-        if os.getenv('HA_TOKEN_FILE'):
-            ha_token=Path(os.environ['HA_TOKEN_FILE']).read_text().strip()
-        if not ha_token:raise RuntimeError('Home Assistant credentials unavailable')
+        self.phase='demo data' if DEMO_DATA else 'Home Assistant connection'
         self.start('broker',['python3',str(GATEWAY/'ha_broker.py')],{
             'HA_BROKER_HOST':'127.0.0.1','HA_BROKER_PORT':'8083',
             'HA_BROKER_TOKEN':self.broker_unused,'HA_BROKER_ADMIN_TOKEN':self.broker_admin,
-            'HA_BASE_URL':base_url,'HA_TOKEN':ha_token,'HA_BROKER_POLICY_DIR':str(pages),
+            **broker_backend_environment(),'HA_BROKER_POLICY_DIR':str(pages),
             'HA_PAGE_CAPABILITY_REGISTRY':str(ROOT/'broker/page-capabilities.json')})
         self.start('admin',['python3',str(GATEWAY/'server.py')],{**common,
             'GATEWAY_ROLE':'admin','GATEWAY_DATA_DIR':str(ROOT/'admin'),'PORT':'8081',
@@ -277,6 +286,8 @@ class Ingress(BaseHTTPRequestHandler):
                 if path.startswith('/api/'):
                     self.send(503,{'error':'Application is starting'});return
                 html=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf)
+                if DEMO_DATA:
+                    html=html.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')
                 self.send(200,html.encode(),'text/html; charset=utf-8');return
             target='/admin' if path=='/' else self.path
             connection=http.client.HTTPConnection('127.0.0.1',8081,timeout=40)
@@ -287,6 +298,8 @@ class Ingress(BaseHTTPRequestHandler):
                 kind=response.getheader('Content-Type','application/json')
                 if 'text/html' in kind:
                     payload=payload.replace(b'</head>',f'<meta name="access-pages-csrf" content="{runtime.csrf}"></head>'.encode())
+                    if DEMO_DATA:
+                        payload=payload.replace(b'<body>', b'<body><p role="note" style="padding:12px;text-align:center">NHP test: demo data only. No Home Assistant device access. Demo actions reset when the app restarts.</p>')
                 self.send(response.status,payload,kind)
             finally:connection.close()
         except Exception:self.send(400,{'error':'Operation failed. Check the enrollment link and service connection.'})

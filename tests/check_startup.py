@@ -4,6 +4,7 @@ Run on a Linux CI runner with the app image and its AppArmor profile loaded.
 No Home Assistant token, cloud credentials, host files, or public ports are used.
 """
 import json
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -27,9 +28,9 @@ def check_startup(image, name, *, apparmor=False):
         "import json,urllib.request; "
         "r=urllib.request.urlopen('http://127.0.0.1:8099/setup/status',timeout=2); "
         "s=json.load(r); assert r.status==200 and s['enrolled'] is False "
-        "and s['ready'] is False; "
+        "and s['ready'] is False and s['device_data']=='demo'; "
         "page=urllib.request.urlopen('http://127.0.0.1:8099/',timeout=2).read(); "
-        "assert b'enrollment_link' in page; print('setup-ready')"
+        "assert b'enrollment_link' in page and b'demo data only' in page; print('setup-ready')"
     )
     try:
         for _ in range(20):
@@ -54,7 +55,16 @@ def check_startup(image, name, *, apparmor=False):
                     protection = docker('exec', ident, 'python3', '-c', boundary)
                     assert protection.stdout.strip() == 'readable\ncode-write-denied'
                     result['app_code_write_denied'] = True
-                result['passed'] = True
+                demo = subprocess.run(
+                    ['docker', 'exec', '-i', '--env',
+                     'PYTHONPATH=/opt/accesspages-test:/opt/accesspages-test/guest_gateway',
+                     ident, 'python3', '-B', '-'],
+                    input=Path(__file__).with_name('test_demo_data.py').read_text(),
+                    text=True, capture_output=True, timeout=30,
+                )
+                result['demo_tests_passed'] = demo.returncode == 0
+                result['demo_tests_output'] = demo.stderr[-12000:]
+                result['passed'] = demo.returncode == 0
                 break
             time.sleep(0.5)
         if not result['passed']:
