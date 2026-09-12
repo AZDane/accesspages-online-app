@@ -182,7 +182,7 @@ class Runtime:
         ca=os.getenv('NHP_SERVICE_CA_FILE')
         if ca:atomic(ROOT/'public/service-ca.crt',Path(ca).read_text(),0o644)
         common={'ACCESS_TRANSPORT':'nhp','NHP_INSTALLATION_ROUTING':'1',
-                'NHP_GATEWAY_ORIGIN':origin,'NHP_LANDING_ORIGIN':self.installation.service_url,
+                'NHP_GATEWAY_ORIGIN':origin,'NHP_LANDING_ORIGIN':json.loads((self.installation.root/'profile.json').read_text())['landing_origin'],
                 'NHP_BINDING_FILE':str(ROOT/'public/binding.json'),
                 'NHP_VERIFY_KEY_FILE':str(ROOT/'public/handoff-public-key'),
                 'HOST':'127.0.0.1','ACCESS_LINK_MAX_LIFETIME_DAYS':'1',

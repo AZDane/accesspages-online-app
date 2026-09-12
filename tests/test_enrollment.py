@@ -6,12 +6,16 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from io import BytesIO
+import base64
+import installation
 
 from installation import Installation, atomic
 import nhp
 import runtime
 
 SERVICE = 'https://service.example.test'
+LANDING = 'https://access.example.test'
 TOKEN = 'A' * 43
 GATEWAY = 'gw_' + 'B' * 43
 
@@ -24,7 +28,8 @@ class FakeInstallation(Installation):
     def profile(self):
         return {'server_public_key': 'C' * 44, 'server_host': 'nhp.example.test',
                 'control_certificate': 'test', 'frp_certificate': 'test',
-                'handoff_public_key': 'test', 'landing_origin': SERVICE}
+                'handoff_public_key': 'test', 'landing_origin': LANDING,
+                'version': 2, 'service_origin': SERVICE, 'server_port': 62206}
     def operation(self, body, **kwargs):
         self.calls.append(body)
         if body['op'] == 'bind':
@@ -38,6 +43,54 @@ class FakeInstallation(Installation):
         return None
 
 class EnrollmentTests(unittest.TestCase):
+    def test_discovery_profile_separates_service_and_guest_origins(self):
+        profile={'version':2,'service_origin':SERVICE,'landing_origin':LANDING,
+                 'server_host':'nhp.example.test','server_port':62206,
+                 'server_public_key':base64.b64encode(b's'*32).decode(),
+                 'handoff_public_key':base64.b64encode(b'h'*32).decode(),
+                 'control_certificate':'fixture','frp_certificate':'fixture'}
+        with tempfile.TemporaryDirectory() as root:
+            app=Installation(root,SERVICE)
+            class Response(BytesIO):
+                def geturl(self):return SERVICE+'/installation.json'
+            def read(value):
+                response=Response(json.dumps(value).encode())
+                with patch.object(installation,'build_opener') as opener, patch.object(installation.x509,'load_pem_x509_certificate'):
+                    opener.return_value.open.return_value=response
+                    return app.profile()
+            self.assertEqual(read(profile)['landing_origin'],LANDING)
+            for changes in [{'version':1},{'service_origin':LANDING},{'landing_origin':SERVICE},
+                            {'landing_origin':LANDING+'/admin'},{'landing_origin':'http://access.example.test'}]:
+                with self.subTest(changes=changes),self.assertRaises(ValueError):read({**profile,**changes})
+
+    def test_beta_address_migration_preserves_keys_without_native_registration(self):
+        old='https://access.beta.accesspages.app';new='https://relay.beta.accesspages.app'
+        anchors={name:name+'-same-public-material' for name in ('server_public_key','handoff_public_key','control_certificate','frp_certificate')}
+        with tempfile.TemporaryDirectory() as root:
+            state={'gateway_id':GATEWAY,'state':'enrolled','service_url':old}
+            atomic(Path(root)/'binding.json',json.dumps(state))
+            atomic(Path(root)/'profile.json',json.dumps({**anchors,'landing_origin':old}))
+            atomic(Path(root)/'machine/private-key','fixture-private-key')
+            with patch.object(Installation,'profile',return_value={**anchors,'version':2,'service_origin':new,'landing_origin':old}),patch.object(Installation,'operation',side_effect=AssertionError('NHP must not run during discovery')):
+                Installation(root,new)
+            saved=json.loads((Path(root)/'binding.json').read_text())
+            self.assertEqual(saved,{**state,'service_url':new})
+            self.assertEqual((Path(root)/'machine/private-key').read_text(),'fixture-private-key')
+
+    def test_beta_address_migration_rejects_changed_trust_before_writes(self):
+        old='https://access.beta.accesspages.app';new='https://relay.beta.accesspages.app'
+        anchors={name:name+'-same-public-material' for name in ('server_public_key','handoff_public_key','control_certificate','frp_certificate')}
+        for name in [*anchors,'landing_origin']:
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as root:
+                state=json.dumps({'gateway_id':GATEWAY,'state':'enrolled','service_url':old})
+                previous=json.dumps({**anchors,'landing_origin':old})
+                atomic(Path(root)/'binding.json',state);atomic(Path(root)/'profile.json',previous)
+                changed={**anchors,'landing_origin':old,name:'changed'}
+                with patch.object(Installation,'profile',return_value=changed),patch.object(Installation,'operation',side_effect=AssertionError('NHP must not run')),self.assertRaises(ValueError):
+                    Installation(root,new)
+                self.assertEqual((Path(root)/'binding.json').read_text(),state)
+                self.assertEqual((Path(root)/'profile.json').read_text(),previous)
+
     def test_raw_token_resolves_identity_and_discards_bootstrap(self):
         with tempfile.TemporaryDirectory() as root:
             app = FakeInstallation(root)
@@ -89,7 +142,7 @@ class EnrollmentTests(unittest.TestCase):
     def test_short_link_mint_and_revocation_retain_local_tracking(self):
         for short in [True]:
             with self.subTest(short=short), tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'GATEWAY_DATA_DIR': root}), patch.object(nhp, 'INSTALLATION_ROUTING', True):
-                link = SERVICE + ('/#' + TOKEN if short else '/#access=' + TOKEN + '&resource=front-door')
+                link = LANDING + '/#' + TOKEN
                 calls = []
                 def operation(body):
                     calls.append(body)

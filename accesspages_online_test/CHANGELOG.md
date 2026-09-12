@@ -1,3 +1,10 @@
+# 0.1.0-beta.6
+
+- Separate the Service discovery address from the guest AccessLink website.
+- Use https://relay.beta.accesspages.app as the beta Service address. Update this option when upgrading an enrolled app.
+- Preserve an existing beta identity across this address change only when every saved public key and CA matches.
+- Keep enrollment tokens one-use and remove them after successful enrollment.
+
 # 0.1.0-beta.5
 
 - Generate shorter guest AccessLinks containing only `/#<token>`; the service resolves the assigned resource.

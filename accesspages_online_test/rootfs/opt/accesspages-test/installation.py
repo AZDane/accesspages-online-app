@@ -37,7 +37,7 @@ class Installation:
     def __init__(self, root, service_url=None):
         self.root = Path(root)
         self.machine_dir = self.root/'machine'
-        self.service_url = (service_url or os.getenv('NHP_SERVICE_URL', 'https://access.beta.accesspages.app')).rstrip('/')
+        self.service_url = (service_url or os.getenv('NHP_SERVICE_URL', 'https://relay.beta.accesspages.app')).rstrip('/')
         parsed=urlparse(self.service_url)
         if (parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or
             parsed.path or parsed.params or parsed.query or parsed.fragment or
@@ -45,6 +45,7 @@ class Installation:
             raise ValueError('Service address must be an HTTPS origin')
         if parsed.port is not None and not 1<=parsed.port<=65535:
             raise ValueError('Invalid service port')
+        self.context = ssl.create_default_context(cafile=os.getenv('NHP_SERVICE_CA_FILE') or None)
         # Never send an enrolled identity to a newly configured authority.
         binding_path=self.root/'binding.json'
         if binding_path.exists():
@@ -53,8 +54,22 @@ class Installation:
             if saved is None and (self.root/'profile.json').exists():
                 saved=json.loads((self.root/'profile.json').read_text()).get('landing_origin')
             if saved!=self.service_url:
-                raise ValueError('Service address does not match this enrolled installation')
-        self.context = ssl.create_default_context(cafile=os.getenv('NHP_SERVICE_CA_FILE') or None)
+                self.migrate_discovery_origin(binding, saved)
+
+    def migrate_discovery_origin(self, binding, saved):
+        """Move this beta's discovery origin only when every trust anchor matches."""
+        if (saved, self.service_url) != ('https://access.beta.accesspages.app', 'https://relay.beta.accesspages.app'):
+            raise ValueError('Service address does not match this enrolled installation')
+        previous=json.loads((self.root/'profile.json').read_text())
+        current=self.profile()  # Public HTTPS discovery only; no NHP identity or bootstrap is sent.
+        anchors=('server_public_key','handoff_public_key','control_certificate','frp_certificate')
+        if any(not previous.get(name) or previous[name]!=current.get(name) for name in anchors):
+            raise ValueError('Service discovery migration changed an authority key')
+        if current['landing_origin']!=saved:
+            raise ValueError('Service discovery migration changed the guest landing')
+        binding['service_url']=self.service_url
+        atomic(self.root/'binding.json',json.dumps(binding))
+        atomic(self.root/'profile.json',json.dumps(current),0o644)
 
     def operation(self, body, *, connector=False):
         result = subprocess.run(['/opt/machinectl'], input=json.dumps(body),
@@ -76,8 +91,14 @@ class Installation:
         if len(raw)>16384:
             raise ValueError('Invalid installation profile')
         profile=json.loads(raw)
-        if profile.get('version')!=1 or profile.get('landing_origin')!=self.service_url or profile.get('server_port')!=62206:
+        if profile.get('version')!=2 or profile.get('service_origin')!=self.service_url or profile.get('server_port')!=62206:
             raise ValueError('Unsupported installation service')
+        landing=urlparse(profile.get('landing_origin',''))
+        if (landing.scheme!='https' or not landing.hostname or landing.username or landing.password or
+            landing.path or landing.params or landing.query or landing.fragment or
+            landing.geturl()==self.service_url or any(c.isspace() for c in landing.geturl()) or
+            (landing.port is not None and not 1<=landing.port<=65535)):
+            raise ValueError('Invalid guest landing origin')
         for field in ('server_public_key','handoff_public_key'):
             if len(base64.b64decode(profile[field],validate=True))!=32:
                 raise ValueError('Invalid service public key')

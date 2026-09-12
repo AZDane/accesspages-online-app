@@ -6,7 +6,7 @@ It uses built-in demo devices so that NHP can be tested without HA credentials.
 
 ## Configuration
 
-Set the Service address on the app's Configuration page. The app obtains its
+Set the Service address on the app's Configuration page to `https://relay.beta.accesspages.app` for this beta. The app obtains its
 route and tunnel credentials from that service during enrollment.
 Select the demo door, light or temperature sensor and permitted actions when
 creating each page in Admin. Actions change only in-memory demo data; restarting
@@ -42,7 +42,7 @@ followed by a signed, one-use handoff to the customer's Guest Gateway.
 
 Beta.5 uses `/#<token>` invitations and rejects the earlier named-parameter link
 format. After updating, create fresh demo pages and guests for acceptance testing.
-Existing installations retain their enrolled identities; no new bootstrap is needed.
+For beta.6, also change Service address to `https://relay.beta.accesspages.app`. The app verifies that the new address has exactly the same saved NHP public key, handoff key and certificate authorities before preserving its enrolled identity. No new bootstrap is needed. Guest invitations still start at `https://access.beta.accesspages.app`.
 
 All pages use one installation endpoint; their grants and sessions remain
 separate. Revocation in Admin removes the local grant and revokes its hosted
