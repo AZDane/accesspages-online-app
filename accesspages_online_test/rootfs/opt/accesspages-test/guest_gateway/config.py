@@ -96,7 +96,7 @@ ACTIVITY_DB_FILE = Path(
 ACTIVITY_BROKER_URL = os.getenv("ACTIVITY_BROKER_URL", "").strip().rstrip("/")
 RESET_REQUEST_FILE = Path(
     os.getenv(
-        "LAYER_V_RESET_REQUEST_FILE",
+        "ACCESS_SERVICE_RESET_REQUEST_FILE",
         str(DATA_DIR / "reset-connection.request"),
     )
 )

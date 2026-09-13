@@ -1617,7 +1617,7 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
-    def _reset_layer_v_connection(self, payload):
+    def _reset_service_connection(self, payload):
         if payload.get("confirmation") != "RESET":
             self._send_json(
                 HTTPStatus.BAD_REQUEST,

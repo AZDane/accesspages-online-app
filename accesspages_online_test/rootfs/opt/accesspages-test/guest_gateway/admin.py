@@ -133,7 +133,7 @@ def handle_post(handler, path, payload, runtime):
     if path == "/api/admin/connection/reset":
         if not handler._require_admin():
             return
-        handler._reset_layer_v_connection(payload)
+        handler._reset_service_connection(payload)
         return
 
     if path == "/api/admin/email/config":
