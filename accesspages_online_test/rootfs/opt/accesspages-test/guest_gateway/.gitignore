@@ -7,7 +7,7 @@ harvested/
 ursa-field-lab.html
 ursaminor.aspx
 .codex/
-layer-v-ha-token-revoke-fix.patch
+*.patch
 __pycache__/
 *.pyc
 
@@ -16,7 +16,7 @@ __pycache__/
 .env.save
 .env.ha-demo
 .env.ha-benchmark
-:Users:johnraahauge:layer-v-ha-test:.env.ha-benchmark
+*:.env.ha-benchmark
 *.backup
 *.before-*
 *.zip
