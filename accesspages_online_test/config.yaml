@@ -1,7 +1,7 @@
 name: Access Pages Online test
 slug: accesspages_online_test
 description: Test OpenNHP guest access with a customer-owned Guest Gateway and simulated devices
-version: 0.1.0-beta.7
+version: 0.1.0-beta.8
 stage: experimental
 startup: application
 boot: auto

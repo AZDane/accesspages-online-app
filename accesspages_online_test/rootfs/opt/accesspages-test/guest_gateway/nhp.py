@@ -1,5 +1,7 @@
 """Optional NHP transport for the existing Admin and Guest Pages boundaries."""
 import base64, hashlib, json, os, re, secrets, sqlite3, subprocess, time
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timezone
@@ -41,7 +43,10 @@ def origin_for_resource(resource):
     return configured.get(resource, defaults.get(resource, ORIGIN))
 
 def machine(body):
-    result = subprocess.run(['/opt/machinectl'], input=json.dumps(body), text=True, capture_output=True, timeout=30)
+    try:
+        result = subprocess.run(['/opt/machinectl'], input=json.dumps(body), text=True, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise AccessServiceError('NHP Server is unavailable; the operation can be retried') from error
     if result.returncode:
         raise AccessServiceError('NHP Server denied the operation or is unavailable')
     return json.loads(result.stdout)
@@ -75,10 +80,60 @@ class NHPClient:
             c.execute('INSERT INTO links VALUES(?,?)',(ident,secret))
         return {'access_link_url':result['access_link'],'access_link_id':ident,'resource_id':resource,'type':'nhp','target_path_applied':True,'expires_at':datetime.fromtimestamp(result['expires'],timezone.utc).isoformat()}
     def delete_access_link(self, *, access_link_id, **kwargs):
-        with db('nhp-links') as c:
+        # Commit the outbox before trying the network. The local guest has
+        # already been disabled; service outages must not lose revocation.
+        with revocation_db() as c:
             row=c.execute('SELECT secret FROM links WHERE id=?',(access_link_id,)).fetchone()
-        if row:machine({'op':'revoke_link','access':row['secret']})
-        return not bool(row)
+            if row is None:return True
+            c.execute('INSERT OR IGNORE INTO pending_revocations(id) VALUES(?)',(access_link_id,))
+        if not _revocation_lock.acquire(blocking=False):
+            raise AccessServiceError('Local access revoked; service revocation is queued for retry')
+        try:_send_revocation(access_link_id)
+        finally:_revocation_lock.release()
+        return False
+
+_revocation_lock=threading.Lock()
+
+@contextmanager
+def revocation_db():
+    c=db('nhp-links')
+    try:
+        with c:
+            c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY,secret TEXT NOT NULL)')
+            c.execute('CREATE TABLE IF NOT EXISTS pending_revocations(id TEXT PRIMARY KEY)')
+            yield c
+    finally:c.close()
+
+def _send_revocation(ident):
+    with revocation_db() as c:
+        row=c.execute('SELECT secret FROM links WHERE id=?',(ident,)).fetchone()
+    if row is not None:
+        result=machine({'op':'revoke_link','access':row['secret']})
+        if result.get('state')!='revoked' or result.get('network_admission_update')!='applied':
+            raise AccessServiceError('Local access revoked; network revocation is awaiting confirmation')
+    with revocation_db() as c:
+        c.execute('DELETE FROM pending_revocations WHERE id=?',(ident,))
+        c.execute('DELETE FROM links WHERE id=?',(ident,))
+
+def retry_revocations():
+    if not _revocation_lock.acquire(blocking=False):return
+    try:
+        with revocation_db() as c:
+            rows=c.execute('SELECT id FROM pending_revocations ORDER BY rowid LIMIT 8').fetchall()
+        for row in rows:
+            try:_send_revocation(row['id'])
+            except AccessServiceError:break
+    finally:_revocation_lock.release()
+
+def start_revocation_worker():
+    def run():
+        while True:
+            try:retry_revocations()
+            except (OSError, sqlite3.Error):pass
+            time.sleep(2)
+    worker=threading.Thread(target=run,name='nhp-revocation',daemon=True)
+    worker.start()
+
 
 # Match the browser's bounded issue-time allowance across independent clocks.
 # Expiration and the absolute session deadline remain strict.

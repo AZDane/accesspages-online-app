@@ -137,12 +137,14 @@ class EnrollmentTests(unittest.TestCase):
             atomic(Path(root)/'options.json', json.dumps({'service_url': 'https://relay.beta.accesspages.app'}))
             self.assertIsNone(runtime.configured_server_address())
 
-    def test_short_link_mint_and_revocation_retain_local_tracking(self):
+    def test_short_link_revocation_clears_tracking_after_confirmation(self):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'GATEWAY_DATA_DIR': root}), patch.object(nhp, 'INSTALLATION_ROUTING', True):
             link = LANDING+'/#'+TOKEN
             calls = []
             def operation(body):
                 calls.append(body)
+                if body['op'] == 'revoke_link':
+                    return {'state': 'revoked', 'network_admission_update': 'applied'}
                 return {'access_link': link, 'expires': 1900000000}
             with patch.object(nhp, 'machine', side_effect=operation):
                 client = nhp.NHPClient()
@@ -151,5 +153,8 @@ class EnrollmentTests(unittest.TestCase):
                 self.assertEqual(result['access_link_id'], hashlib.sha256(TOKEN.encode()).hexdigest())
                 client.delete_access_link(access_link_id=result['access_link_id'])
                 self.assertEqual(calls[-1], {'op': 'revoke_link', 'access': TOKEN})
+                with nhp.revocation_db() as database:
+                    self.assertEqual(database.execute('SELECT COUNT(*) FROM links').fetchone()[0], 0)
+                    self.assertEqual(database.execute('SELECT COUNT(*) FROM pending_revocations').fetchone()[0], 0)
 
 if __name__ == '__main__': unittest.main(verbosity=2)

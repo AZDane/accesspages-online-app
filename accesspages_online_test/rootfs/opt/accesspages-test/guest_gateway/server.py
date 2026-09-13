@@ -1876,6 +1876,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def run():
+    if nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}:
+        nhp.start_revocation_worker()
     PAGES_DIR.mkdir(parents=True, exist_ok=True)
     if (
         GATEWAY_ROLE == "guest"

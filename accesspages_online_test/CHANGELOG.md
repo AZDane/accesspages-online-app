@@ -1,3 +1,10 @@
+# 0.1.0-beta.8
+
+- Keep failed guest revocations queued on disk and retry them after service outages or app restarts.
+- Confirm both service-side revocation and the network admission update before clearing a queued request and deleting its stored invitation secret.
+- Treat native request timeouts as retryable service errors. Local guest access is still disabled first.
+- Preserve enrollment, pages and guests when upgrading from beta.7. Uses the matching hosted admission-withdrawal update.
+
 # 0.1.0-beta.7
 
 - Remove public HTTPS discovery. Start with the native NHP Server address and public trust settings shipped with the app.
