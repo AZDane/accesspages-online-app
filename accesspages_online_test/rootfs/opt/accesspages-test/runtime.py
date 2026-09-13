@@ -120,7 +120,19 @@ class Runtime:
         if ready:ready=self.connector_ready()
         message='Starting local app services.' if not ready and self.message.startswith('Ready') else self.message
         return {'message':message,'enrolled':(self.installation.root/'binding.json').exists(),
-                'ready':bool(ready),'device_data':'demo' if DEMO_DATA else 'homeassistant'}
+                'ready':bool(ready),'admin_ready':self.admin_ready(),
+                'device_data':'demo' if DEMO_DATA else 'homeassistant'}
+
+    def admin_ready(self):
+        # Owner controls must remain reachable through HA Ingress when the
+        # remote tunnel is unavailable, so local revocation can be queued.
+        for role,port in [('admin',8081),('broker',8083)]:
+            child=self.children.get(role)
+            if child is None or child.poll() is not None:return False
+            try:
+                with socket.create_connection(('127.0.0.1',port),timeout=0.2):pass
+            except OSError:return False
+        return True
 
     def connector_ready(self):
         connection=http.client.HTTPConnection('127.0.0.1',8084,timeout=0.5)
@@ -296,9 +308,11 @@ class Ingress(BaseHTTPRequestHandler):
                 value=json.loads(body)
                 if not isinstance(value,dict) or set(value)!={'enrollment_token'}:raise ValueError()
                 self.send(200,runtime.enroll(value['enrollment_token']));return
-            if self.command=='GET' and not runtime.public_status()['ready']:
+            if self.command=='GET' and not runtime.admin_ready():
                 if path.startswith('/api/'):
                     self.send(503,{'error':'Application is starting'});return
+                if runtime.public_status().get('enrolled'):
+                    self.send(200,(APP/'waiting.html').read_bytes(),'text/html; charset=utf-8');return
                 markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.server_address))
                 if DEMO_DATA:
                     markup=markup.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')

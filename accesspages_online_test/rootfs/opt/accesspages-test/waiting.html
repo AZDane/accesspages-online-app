@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Access Pages</title>
+<style>body{font:16px system-ui,sans-serif;max-width:38rem;margin:10vh auto;padding:1.5rem;line-height:1.6;color:#172b3a}h1{font-size:1.7rem}p{color:#455866}</style>
+<h1>Access Pages is reconnecting</h1>
+<p>Your enrollment is saved. This page will open automatically when local administration is ready.</p>
+<script>
+setInterval(async()=>{
+  try {
+    const response=await fetch('setup/status',{cache:'no-store'});
+    if(!response.ok)return;
+    const status=await response.json();
+    if(status.admin_ready||!status.enrolled)location.reload();
+  } catch {}
+},2000);
+</script>
+</html>

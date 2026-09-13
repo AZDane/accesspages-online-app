@@ -1,3 +1,10 @@
+# 0.1.0-beta.9
+
+- Keep the local administration page and guest list available through trusted HA Ingress when the remote tunnel is offline and local admin services are running.
+- Let owners revoke guests and queue service-side withdrawal during an outage. Preserve the existing Ingress source and CSRF checks.
+- Show a reconnecting page for an already-enrolled app waiting to start, instead of asking for another enrollment token.
+- Keep beta.8's durable retry behavior and existing enrollment, pages and guests.
+
 # 0.1.0-beta.8
 
 - Keep failed guest revocations queued on disk and retry them after service outages or app restarts.
