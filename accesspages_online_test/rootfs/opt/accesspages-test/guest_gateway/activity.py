@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 
+from ha import HomeAssistantError, nhp_page_capability
+
 
 RETENTION_DAYS = 30
 MAX_ACTIONS_PER_GUEST = 1000
@@ -412,7 +414,16 @@ class BrokerGuestActivityStore:
         self.token = token
         self.page_id = page_id
 
-    def _post(self, operation: str, payload: dict) -> dict:
+    def _post(self, operation: str, payload: dict, page_id="") -> dict:
+        page = self.page_id
+        token = self.token
+        if os.getenv("NHP_PAGE_CAPABILITIES_FILE"):
+            try:
+                page, token = nhp_page_capability(page_id or self.page_id)
+            except HomeAssistantError as error:
+                raise ActivityBrokerError("Authorized page required for activity") from error
+        elif page_id and page_id != page:
+            raise ActivityBrokerError("Activity page mismatch")
         broker = urlparse(self.url)
         if broker.scheme != "http" or not broker.hostname:
             raise ActivityBrokerError("Activity broker is unavailable")
@@ -422,13 +433,13 @@ class BrokerGuestActivityStore:
                 "POST",
                 "/api/internal/guest-activity",
                 body=json.dumps({
-                    "operation": operation,
-                    "page_id": self.page_id,
                     **payload,
+                    "operation": operation,
+                    "page_id": page,
                 }).encode(),
                 headers={
                     "Content-Type": "application/json",
-                    "X-Page-Capability": self.token,
+                    "X-Page-Capability": token,
                 },
             )
             response = connection.getresponse()
@@ -442,14 +453,14 @@ class BrokerGuestActivityStore:
             connection.close()
 
     def register_guest(self, page_id, grant):
-        self._post("register", {"grant": grant})
+        self._post("register", {"grant_id": grant["id"]}, page_id)
 
     def record_initial_access(self, page_id, grant):
-        return bool(self._post("initial_access", {"grant": grant}).get("first"))
+        return bool(self._post("initial_access", {"grant_id": grant["id"]}, page_id).get("first"))
 
     def record_action(self, **payload):
         self._post("action", payload)
 
     def record_security_event(self, **payload):
-        payload.pop("page_id", None)
-        self._post("security_event", payload)
+        page_id = payload.pop("page_id", "")
+        self._post("security_event", payload, page_id)

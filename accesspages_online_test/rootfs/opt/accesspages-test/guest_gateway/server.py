@@ -76,6 +76,7 @@ from ha import (
     BrokerHomeAssistantClient,
     HomeAssistantClient,
     HomeAssistantError,
+    nhp_page_capability,
     normalize_capabilities,
 )
 from access_service import AccessServiceError
@@ -612,6 +613,8 @@ class Handler(BaseHTTPRequestHandler):
         grant = getattr(self, "active_grant", {})
         broker_url = VERIFICATION_BROKER_URL
         capability = PAGE_CAPABILITY_TOKEN
+        if nhp.ENABLED and GATEWAY_ROLE == "guest":
+            _, capability = nhp_page_capability(page_id)
         if not broker_url:
             # Compiled page endpoints proxy into the trusted gateway. Re-enter
             # its narrow internal notification route on loopback so recipient
@@ -647,6 +650,8 @@ class Handler(BaseHTTPRequestHandler):
             response.read()
             if response.status >= 400:
                 raise HomeAssistantError("Guest notification failed")
+        except (OSError, HTTPException) as error:
+            raise HomeAssistantError("Guest notification failed") from error
         finally:
             connection.close()
 
@@ -656,6 +661,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             text, html = guest_invitation_email_content(
                 grant["access_link_url"], access_url,
+                verification_method=grant.get("verification_method", "none") if nhp.ENABLED else None,
             )
             send_email(
                 SMTP_CONFIG_STORE.load(),
@@ -670,7 +676,7 @@ class Handler(BaseHTTPRequestHandler):
                 grant_id=grant["id"],
             )
             return True
-        except EmailConfigError:
+        except (EmailConfigError, OSError):
             audit(
                 "guest_invitation_email_failed",
                 page_id=page_id,
@@ -751,7 +757,11 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if nhp.ENABLED:
-            return nhp.authorize(self, page, RUNTIME)
+            if not nhp.authorize(self, page, RUNTIME):
+                return False
+            self.active_grant = {**self.active_grant, "_page_id": page["id"]}
+            self._record_initial_guest_access(page, self.active_grant)
+            return True
 
         bound_page_id = self._connector_bound_page_id()
         if bound_page_id:
@@ -815,17 +825,7 @@ class Handler(BaseHTTPRequestHandler):
                         ),
                     })
                     return False
-            try:
-                first_access = ACTIVITY_STORE.record_initial_access(page["id"], grant)
-                if first_access:
-                    self._send_guest_notification(page["id"], "initial_login")
-            except (OSError, sqlite3.Error, HomeAssistantError):
-                audit(
-                    "guest_notification_failed",
-                    event_type="initial_login",
-                    page_id=page["id"],
-                    grant_id=grant["id"],
-                )
+            self._record_initial_guest_access(page, grant)
             return True
 
         if status == "expired" and grant is not None:
@@ -987,6 +987,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
                 {"error": str(error)},
+            )
+
+    def _record_initial_guest_access(self, page, grant):
+        # The store upserts the guest and atomically marks first access. All
+        # NHP guest processes use the admin-owned broker/store for this event.
+        try:
+            first_access = ACTIVITY_STORE.record_initial_access(page["id"], grant)
+            if first_access:
+                self._send_guest_notification(page["id"], "initial_login")
+        except (OSError, sqlite3.Error, HomeAssistantError, HTTPException):
+            audit(
+                "guest_notification_failed",
+                event_type="initial_login",
+                page_id=page["id"],
+                grant_id=grant["id"],
             )
 
     def _record_guest_action(
@@ -1308,6 +1323,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Choose a verification method and enter the guest email"})
                 return
             nhp_options = {"verification_method": method, "verification_email": email if method != "none" else ""}
+        send_invitation = payload.get("send_invitation_email", False)
+        invitation_email = ""
+        try:
+            if type(send_invitation) is not bool:
+                raise EmailConfigError("Choose whether to email the invitation")
+            if send_invitation:
+                invitation_email = validate_email(payload.get("invitation_email", ""), "Invitation recipient").lower()
+                if not SMTP_CONFIG_STORE.configured():
+                    raise EmailConfigError("Configure local SMTP before emailing invitations")
+                if nhp_options.get("verification_method", "none") != "none" and invitation_email != nhp_options["verification_email"]:
+                    raise EmailConfigError("Send the invitation to the email selected for guest verification")
+        except (EmailConfigError, OSError) as error:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+            return
         notifications = payload.get("notifications")
         if notifications is not None:
             try:
@@ -1317,6 +1346,9 @@ class Handler(BaseHTTPRequestHandler):
                     available.add("email")
                 if any(item not in available for item in notifications["targets"]):
                     raise PageConfigError("A notification target is not configured")
+            except PageConfigError as error:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
             except HomeAssistantError as error:
                 self._send_ha_error(error)
                 return
@@ -1325,8 +1357,8 @@ class Handler(BaseHTTPRequestHandler):
                 HTTPStatus.CONFLICT,
                 {
                     "error": (
-                        "Guest-specific email verification will return when "
-                        "OpenNHP Service Connector target_path is available"
+                        "Choose Google sign-in or Email code under Verification method. "
+                        "Guest verification is handled by OpenNHP Service."
                     )
                 },
             )
@@ -1432,12 +1464,12 @@ class Handler(BaseHTTPRequestHandler):
         public_grant["access_url"] = access_link["access_link_url"]
         public_grant["single_link"] = True
 
-        email_delivery = {"required": verification_required, "sent": False}
-        if verification_required:
+        email_delivery = {"requested": send_invitation, "sent": False}
+        if send_invitation:
             email_delivery["sent"] = self._send_guest_invitation(
                 page_id,
                 grant,
-                verification_email,
+                invitation_email,
                 "",
             )
 

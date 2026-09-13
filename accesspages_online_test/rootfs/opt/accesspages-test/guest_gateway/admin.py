@@ -140,14 +140,6 @@ def handle_post(handler, path, payload, runtime):
         if not handler._require_admin():
             return
         try:
-            if runtime.nhp.ENABLED:
-                from dataclasses import asdict
-                from email_delivery import validate_smtp_config
-                candidate = dict(payload)
-                if not candidate.get("password"):
-                    candidate["password"] = runtime.SMTP_CONFIG_STORE.load().password
-                config = validate_smtp_config(candidate, require_password=True)
-                runtime.nhp.machine({"op": "configure_email", "smtp": asdict(config)})
             runtime.SMTP_CONFIG_STORE.save(payload)
             handler._send_json(200, runtime.SMTP_CONFIG_STORE.public_view())
         except (runtime.EmailConfigError, runtime.AccessServiceError, OSError) as error:

@@ -61,22 +61,36 @@ function updateNhpVerification() {
  const method = nhpVerificationInput.value;
  verificationEmailField.classList.toggle("hidden", method === "none");
  document.getElementById("nhp-verification-help").textContent = method === "none"
-  ? "NHP checks the AccessLink on the first knock. No additional verification is required."
-  : "After the first knock, NHP requires " + (method === "google" ? "the invited Google account" : "a code for the invited email") + " before opening network access. Only then does the browser continue to the Guest Page.";
+  ? "Anyone with a valid invitation can open this page."
+  : "The guest must verify " + (method === "google" ? "the invited Google account" : "a code sent to the invited email") + " before the page opens.";
 }
 nhpVerificationInput.addEventListener("change", () => {
  updateNhpVerification();
  if (nhpVerificationInput.value !== "none") verificationEmailInput.focus();
 });
 const oneTimeUseInput = document.getElementById("one-time-use");
-const verificationRequiredInput = document.getElementById("verification-required");
+const sendInvitationEmailInput = document.getElementById("send-invitation-email");
+const invitationEmailInput = document.getElementById("invitation-email");
+const invitationEmailField = document.getElementById("invitation-email-field");
+function updateInvitationDelivery() {
+  sendInvitationEmailInput.disabled = !emailConfigured;
+  if (!emailConfigured) sendInvitationEmailInput.checked = false;
+  invitationEmailField.classList.toggle("hidden", !sendInvitationEmailInput.checked);
+  document.getElementById("invitation-email-help").textContent = emailConfigured
+    ? "Send this invitation through your configured SMTP provider. Verification still happens in OpenNHP Service."
+    : "Configure local SMTP to send invitations directly from the app.";
+}
+sendInvitationEmailInput.addEventListener("change", () => {
+  if (sendInvitationEmailInput.checked && !invitationEmailInput.value) invitationEmailInput.value = verificationEmailInput.value;
+  updateInvitationDelivery();
+  if (sendInvitationEmailInput.checked) invitationEmailInput.focus();
+});
 const activityNotificationsInput = document.getElementById("activity-notifications");
 const activityNotificationOptions = document.getElementById("activity-notification-options");
 const notificationTargets = document.getElementById("notification-targets");
 const configureNotificationsButton = document.getElementById("configure-notifications");
 const verificationEmailField = document.getElementById("verification-email-field");
 const verificationEmailInput = document.getElementById("verification-email");
-const verificationHelp = document.getElementById("verification-help");
 const customLifetime = document.getElementById("custom-lifetime");
 const customLifetimeValue = document.getElementById(
   "custom-lifetime-value",
@@ -211,10 +225,6 @@ configureEmailButton.addEventListener("click", () => {
 closeEmailDialogButton.addEventListener("click", () => emailDialog.close());
 emailForm.addEventListener("submit", saveEmailSettings);
 testEmailButton.addEventListener("click", sendTestEmail);
-verificationRequiredInput.addEventListener("change", () => {
-  verificationEmailField.classList.toggle("hidden", !verificationRequiredInput.checked);
-  if (verificationRequiredInput.checked) verificationEmailInput.focus();
-});
 activityNotificationsInput.addEventListener("change", () => {
   activityNotificationOptions.classList.toggle(
     "hidden", !activityNotificationsInput.checked,
@@ -391,16 +401,13 @@ async function loadGatewayStatus() {
       ? "Configured"
       : "Not configured";
     emailConfigured = Boolean(data.email_configured);
+    updateInvitationDelivery();
     try {
       await loadNotificationOptions();
     } catch (_error) {
       renderNotificationTargets([]);
       gatewayNotifications.textContent = "Unavailable";
     }
-    verificationRequiredInput.disabled = !emailConfigured;
-    verificationHelp.textContent = emailConfigured
-      ? "Send a one-time code to the guest before showing controls."
-      : "Configure email delivery in Gateway health before enabling verification.";
     gatewayPages.textContent = String(data.page_count ?? pages.length);
     const connectorTotal = Number(data.connectors?.total ?? 0);
     const connectorActive = Number(data.connectors?.active ?? 0);
@@ -564,10 +571,8 @@ async function saveEmailSettings(event) {
   smtpPassword.value = "";
   gatewayEmail.textContent = "Configured";
   emailConfigured = true;
-  verificationRequiredInput.disabled = false;
-  verificationHelp.textContent =
-    "Send a one-time code to the guest before showing controls.";
-  setEmailStatus("Email settings saved. NHP will deliver guest verification codes using these settings.", "success");
+  updateInvitationDelivery();
+  setEmailStatus("Local SMTP settings saved for invitations and owner alerts. Guest verification is handled by OpenNHP Service.", "success");
   saveEmailButton.textContent = "Saved ✓";
   setTimeout(() => {
     saveEmailButton.disabled = false;
@@ -1822,16 +1827,15 @@ async function deleteSelectedActivity() {
 }
 
 function openUserDialog() {
+  sendInvitationEmailInput.checked = false;
+  invitationEmailInput.value = "";
+  updateInvitationDelivery();
   oneTimeUseInput.checked = true;
   nhpVerificationInput.value = "none";
   updateNhpVerification();
   access_linkLabelInput.value = "";
-  verificationRequiredInput.checked = false;
   activityNotificationsInput.checked = false;
   activityNotificationOptions.classList.add("hidden");
-  verificationRequiredInput.disabled = true;
-  verificationHelp.textContent =
-    "Guest verification is configured before access using the selector above.";
   verificationEmailInput.value = "";
   verificationEmailField.classList.add("hidden");
   access_linkResult.classList.add("hidden");
@@ -1840,6 +1844,7 @@ function openUserDialog() {
 }
 
 async function generateAccessLink() {
+  if (generateAccessLinkButton.disabled) return;
   if (!currentPage || !editingExisting) {
     setStatus("Save the page before generating a AccessLink.", "error");
     return;
@@ -1861,13 +1866,10 @@ async function generateAccessLink() {
   }
 
   if (nhpVerificationInput.value !== "none" && (!verificationEmailInput.value.trim() || !verificationEmailInput.checkValidity())) {
-    setStatus("Enter the invited guest email for NHP verification.", "error");
+    setStatus("Enter the invited guest email for verification.", "error");
     verificationEmailInput.focus();
     return;
   }
-  generateAccessLinkButton.disabled = true;
-  setStatus(`Creating access for ${userName}…`);
-  const verificationRequested = verificationRequiredInput.checked;
   const verificationEmail = verificationEmailInput.value.trim();
   const notificationSettings = activityNotificationsInput.checked ? {
     targets: [...document.querySelectorAll('input[name="notification-target"]:checked')].map((input) => input.value),
@@ -1883,6 +1885,22 @@ async function generateAccessLink() {
     return;
   }
 
+  const invitationEmail = invitationEmailInput.value.trim().toLowerCase();
+  if (sendInvitationEmailInput.checked) {
+    if (!emailConfigured || !invitationEmail || !invitationEmailInput.checkValidity()) {
+      setStatus("Configure local SMTP and enter the invitation recipient.", "error");
+      invitationEmailInput.focus();
+      return;
+    }
+    if (nhpVerificationInput.value !== "none" && invitationEmail !== verificationEmail.toLowerCase()) {
+      setStatus("Send the invitation to the email selected for guest verification.", "error");
+      invitationEmailInput.focus();
+      return;
+    }
+  }
+
+  generateAccessLinkButton.disabled = true;
+  setStatus(`Creating access for ${userName}…`);
   try {
     const response = await adminApi.fetch(
       `api/admin/pages/${encodeURIComponent(currentPage.id)}/access-links`,
@@ -1893,9 +1911,10 @@ async function generateAccessLink() {
           label: userName,
           lifetime: selectedLifetime(),
           one_time_use: oneTimeUseInput.checked,
-          verification_required: verificationRequested,
           verification_email: verificationEmail,
           verification_method: nhpVerificationInput.value,
+          send_invitation_email: sendInvitationEmailInput.checked,
+          invitation_email: sendInvitationEmailInput.checked ? invitationEmail : "",
           notifications: notificationSettings,
         }),
       },
@@ -1950,39 +1969,15 @@ async function generateAccessLink() {
     sharingContent.className = "access_link-sharing-content";
     sharingContent.append(activationRow, sharePanel);
 
-    if (verificationRequested && data.email_delivery?.sent) {
-      const deliveryStatus = document.createElement("div");
-      deliveryStatus.className = "access_link-delivery-status";
-
-      const deliveryTitle = document.createElement("strong");
-      deliveryTitle.textContent = "Invitation email sent";
-      const deliveryText = document.createElement("p");
-      deliveryText.textContent =
-        `The activation and access links were sent to ${verificationEmail}. ` +
-        "A separate verification code will be sent when the guest opens the access page.";
-      deliveryStatus.append(deliveryTitle, deliveryText);
-
-      const fallback = document.createElement("details");
-      fallback.className = "access_link-sharing-fallback";
-      const fallbackSummary = document.createElement("summary");
-      fallbackSummary.textContent = "Show backup sharing options";
-      fallback.append(fallbackSummary, sharingContent);
-      access_linkResult.append(deliveryStatus, fallback);
-    } else {
-      if (verificationRequested) {
-        const deliveryStatus = document.createElement("div");
-        deliveryStatus.className = "access_link-delivery-status warning";
-        const deliveryTitle = document.createElement("strong");
-        deliveryTitle.textContent = "Invitation email was not sent";
-        const deliveryText = document.createElement("p");
-        deliveryText.textContent =
-          "The guest link was created. Use a backup sharing option below, " +
-          "then check the email configuration before creating another verified guest.";
-        deliveryStatus.append(deliveryTitle, deliveryText);
-        access_linkResult.append(deliveryStatus);
-      }
-      access_linkResult.append(sharingContent);
+    if (data.email_delivery?.requested) {
+      const notice = document.createElement("p");
+      notice.className = data.email_delivery.sent ? "status success" : "status error";
+      notice.textContent = data.email_delivery.sent
+        ? "Invitation submitted to your SMTP provider for delivery."
+        : "Email delivery could not be confirmed. The invitation is saved; use the sharing options below.";
+      access_linkResult.append(notice);
     }
+    access_linkResult.append(sharingContent);
     access_linkResult.classList.remove("hidden");
     access_linkResult.classList.remove("result-reveal");
     void access_linkResult.offsetWidth;
@@ -1996,22 +1991,10 @@ async function generateAccessLink() {
     await loadPages();
     await loadGuestActivitySummaries(currentPage.id);
     renderAccessGrants(currentPage);
-    if (verificationRequested && data.email_delivery?.sent) {
-      setStatus(
-        `Invitation sent for ${userName}. Access expires ${formatExpiry(data.grant.expires_at)}.`,
-        "success",
-      );
-    } else if (verificationRequested) {
-      setStatus(
-        `Guest link created for ${userName}, but the invitation email was not sent.`,
-        "error",
-      );
-    } else {
-      setStatus(
-        `Guest link created for ${userName}. The page connector is waking and should be ready in a few seconds. Access expires ${formatExpiry(data.grant.expires_at)}.`,
-        "success",
-      );
-    }
+    setStatus(
+      `Guest link created for ${userName}. Access expires ${formatExpiry(data.grant.expires_at)}.`,
+      "success",
+    );
   } catch (error) {
     setStatus(`Error: ${error.message}`, "error");
   } finally {

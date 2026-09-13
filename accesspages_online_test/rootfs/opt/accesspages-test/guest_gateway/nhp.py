@@ -139,6 +139,28 @@ def start_revocation_worker():
 # Expiration and the absolute session deadline remain strict.
 ISSUED_AT_CLOCK_SKEW_SECONDS = 5
 
+def verification_policy(grant):
+    """Bind browser sessions to the current, locally saved invitation policy."""
+    if grant.get('verification_required'):
+        raise ValueError('Local verification is unavailable for NHP guests')
+    method = grant.get('verification_method', 'none')
+    email = str(grant.get('verification_email', '')).strip().lower()
+    if method not in ('none', 'google', 'email'):
+        raise ValueError('Unknown verification policy')
+    if method != 'none' and (len(email) > 254 or email.count('@') != 1 or any(c.isspace() for c in email) or not all(email.split('@'))):
+        raise ValueError('Invited email required')
+    return method, email if method != 'none' else ''
+
+def policy_hash(grant):
+    return hashlib.sha256(json.dumps(verification_policy(grant), separators=(',', ':')).encode()).hexdigest()
+
+def require_verified_guest(grant, claims):
+    method, email = verification_policy(grant)
+    if method != 'none':
+        expected = {'google': 'google_oidc', 'email': 'email_otp'}[method]
+        if claims.get('verification_method') != expected or claims.get('verified_email') != email:
+            raise ValueError('Handoff does not satisfy the invited guest policy')
+
 def verify(token):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     if len(token)>4096:raise ValueError()
@@ -174,6 +196,8 @@ def handoff(handler,runtime):
         with db('nhp-sessions') as c, runtime.PAGE_STORE.authority_guard():
             c.executescript('CREATE TABLE IF NOT EXISTS used(id TEXT PRIMARY KEY,expires INTEGER); CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,page TEXT,grant_id TEXT,expires INTEGER);')
             c.execute('BEGIN IMMEDIATE')
+            if 'policy_hash' not in {row['name'] for row in c.execute('PRAGMA table_info(sessions)')}:
+                c.execute("ALTER TABLE sessions ADD COLUMN policy_hash TEXT NOT NULL DEFAULT ''")
             now=int(time.time())
             if claims['exp']<=now:raise ValueError()
             match=None
@@ -182,7 +206,8 @@ def handoff(handler,runtime):
                 for grant in page['access_grants']:
                     if grant['token_hash']==digest and runtime.parse_time(grant['expires_at'])>runtime.utc_now() and not grant.get('verification_required'):
                         if match is not None:raise ValueError()
-                        match=(page['id'],grant['id'],int(runtime.parse_time(grant['expires_at']).timestamp()))
+                        require_verified_guest(grant, claims)
+                        match=(page['id'],grant['id'],int(runtime.parse_time(grant['expires_at']).timestamp()),policy_hash(grant))
             if match is None or claims['resource'] != resource_for_page(match[0]):raise ValueError()
             if INSTALLATION_ROUTING and claims.get('destination') != urlparse(ORIGIN).netloc:raise ValueError()
             session_end=min(now+3600,match[2])
@@ -193,7 +218,7 @@ def handoff(handler,runtime):
             c.execute('DELETE FROM used WHERE expires<=?',(now,))
             c.execute('DELETE FROM sessions WHERE expires<=?',(now,))
             c.execute('INSERT INTO used VALUES(?,?)',(claims['grant_id'],claims['exp']))
-            c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(session_hash(token,claims.get('gateway_epoch')),match[0],match[1],session_end))
+            c.execute('INSERT INTO sessions(hash,page,grant_id,expires,policy_hash) VALUES(?,?,?,?,?)',(session_hash(token,claims.get('gateway_epoch')),match[0],match[1],session_end,match[3]))
             # Commit while the grant read lock is held, so a completed revocation
             # always precedes a rejection or follows an already issued session.
             c.commit()
@@ -216,12 +241,13 @@ def session_hash(token,epoch=None):
 def authorize(handler,page,runtime):
     from ha import AUTHORIZED_NHP_PAGE
     AUTHORIZED_NHP_PAGE.set('')
+    handler.active_grant = {}
     token=handler._cookie(cookie_name(page['id']))
     try:
         with db('nhp-sessions') as c:
             row=c.execute('SELECT * FROM sessions WHERE hash=? AND page=? AND expires>?',(session_hash(token),page['id'],int(time.time()))).fetchone()
         grant=next((g for g in page['access_grants'] if row and g['id']==row['grant_id'] and runtime.parse_time(g['expires_at'])>runtime.utc_now() and not g.get('verification_required')),None)
-        if grant is None:raise ValueError()
+        if grant is None or 'policy_hash' not in row.keys() or row['policy_hash'] != policy_hash(grant):raise ValueError()
         expected_origin=origin_for_resource(resource_for_page(page['id']))
         if handler.command not in ('GET','HEAD') and handler.headers.get('Origin')!=expected_origin:
             handler._send_json(403,{'error':'Origin rejected'});return False

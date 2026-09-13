@@ -299,8 +299,18 @@ def verification_email_content(code: str) -> tuple[str, str]:
 
 def guest_invitation_email_content(
     access_link_url: str, access_url: str,
+    *, verification_method: str | None = None,
 ) -> tuple[str, str]:
     if not access_url:
+        instructions = {
+            "none": "Keep this invitation private. The owner can revoke it at any time.",
+            "email": "OpenNHP Service will send a verification code to the invited email before your page opens.",
+            "google": "Sign in with the invited Google account through OpenNHP Service before your page opens.",
+            None: "A separate one-time verification code will be sent to this email address when you open the guest controls.",
+        }
+        if verification_method not in instructions:
+            raise EmailConfigError("Unknown invitation verification method")
+        instruction = instructions[verification_method]
         safe_access_link = escape(str(access_link_url), quote=True)
         button = (
             "display:inline-block;padding:13px 18px;border-radius:10px;"
@@ -311,14 +321,13 @@ def guest_invitation_email_content(
             "You have been given temporary access through Access Pages.\n\n"
             "Open your private guest link:\n"
             f"{access_link_url}\n\n"
-            "A separate one-time verification code will be sent to this "
-            "email address when you open the guest controls.\n"
+            f"{instruction}\n"
         )
         content = f"""
           <p style="margin:0 0 24px;font-size:16px;line-height:1.6;">You have been given temporary access to selected Home Assistant controls.</p>
           <a href="{safe_access_link}" style="{button}">Open Guest Controls</a>
           <div style="margin-top:12px;color:#7a8798;font-size:11px;line-height:1.4;overflow-wrap:anywhere;">{safe_access_link}</div>
-          <p style="margin:24px 0 0;color:#66758a;font-size:13px;line-height:1.6;">A separate one-time verification code will be sent to this email address when you open the guest controls.</p>
+          <p style="margin:24px 0 0;color:#66758a;font-size:13px;line-height:1.6;">{escape(instruction)}</p>
         """
         return text, _email_shell("Your Access Page", content)
     text = (

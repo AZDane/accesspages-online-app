@@ -1200,35 +1200,6 @@ input:disabled {
   gap: 12px;
 }
 
-.access_link-delivery-status {
-  display: grid;
-  gap: 6px;
-  padding: 14px;
-  border: 1px solid rgba(85,231,157,.45);
-  border-radius: 11px;
-  background: rgba(85,231,157,.1);
-}
-
-.access_link-delivery-status.warning {
-  border-color: rgba(255,190,92,.55);
-  background: rgba(255,190,92,.1);
-}
-
-.access_link-delivery-status p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.access_link-sharing-fallback > summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-weight: 700;
-}
-
-.access_link-sharing-fallback[open] > summary {
-  margin-bottom: 14px;
-}
-
 .access_link-result code,
 .access_link-result .copy-value {
   display: block;

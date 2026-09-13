@@ -42,8 +42,10 @@ invitation with a lifetime and optional verification, then share the AccessLink
 privately. The guest starts at the shared access website. OpenNHP admission is
 followed by a signed, one-use handoff to the customer's Guest Gateway.
 
-Beta.5 uses `/#<token>` invitations and rejects the earlier named-parameter link
-format. After updating, create fresh demo pages and guests for acceptance testing.
+Guest invitations use `/#<token>` and reject the earlier named-parameter link
+format. Beta.10 preserves enrollment, pages and guest records. Browser sessions
+from an older app require a fresh AccessLink handoff; create a new invitation if
+the previous link has expired or its one-time entry has already been consumed.
 Beta.7 replaces HTTPS discovery with packaged public bootstrap settings. Update the
 app and use NHP Server address `nhp.beta.accesspages.app:62206`. Keep app data; the
 app preserves the enrolled identity only if all previously saved NHP/signing keys
@@ -64,6 +66,30 @@ management key; its device broker enforces page policy against the demo data.
 Demo data replaces only the HA device backend. Native REG/RAK, NHP admission,
 the outbound NHP-FRP tunnel, customer TLS, signed handoffs, GuestToken/AccessLink
 handling, expiry and revocation still use the real implementation.
+
+## Invitation email and guest activity
+
+In **Configure email & alerts**, you can configure your own SMTP provider for
+invitation emails and owner alerts. When creating a guest, select **Email
+invitation using my SMTP** and supply the recipient. Sending an invitation is
+optional and independent of requiring guest verification. If verification is
+selected, its invited address and the invitation email recipient must match.
+
+If email delivery cannot be confirmed, the guest invitation is still created.
+Use the displayed AccessLink for manual sharing; avoid creating another guest
+just to retry delivery. SMTP credentials stay in the app's private local data and
+are not sent to OpenNHP Service. Protect app backups as secrets.
+
+Google sign-in and email-code verification happen at OpenNHP Service. They
+require the operator's hosted provider configuration and acceptance testing;
+this app update does not activate those providers. Required verification fails
+closed when unavailable. The Gateway does not issue or accept verification codes.
+
+**View activity** records use of each local guest grant. First-access and selected
+action alerts use owner-configured local delivery; an alert failure does not
+repeat a device action. A possession-only link identifies the invitation used,
+not the person holding it. HA Companion notifications remain unavailable in the
+demo-only beta.
 
 ## Availability and recovery
 

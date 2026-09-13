@@ -329,6 +329,11 @@ def validate_access_grants(raw_grants: object) -> list[dict]:
 
         if raw.get("verification_method", "none") not in ("none", "google", "email"):
             raise PageConfigError("Invalid NHP verification method")
+        if raw.get("verification_method", "none") != "none":
+            email = str(raw.get("verification_email", "")).strip().lower()
+            if len(email) > 254 or email.count("@") != 1 or any(c.isspace() for c in email) or not all(email.split("@")):
+                raise PageConfigError("Invited guest email required")
+            raw = {**raw, "verification_email": email}
         grants.append(
             {
                 "id": grant_id,

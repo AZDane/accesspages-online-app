@@ -39,6 +39,9 @@ def handle_post(handler, path, payload, runtime):
         parts = remainder.split("/")
 
         if len(parts) == 3 and parts[1] == "verification" and parts[2] in {"send", "verify"}:
+            if runtime.nhp.ENABLED:
+                handler._send_json(404, {"error": "not found"})
+                return
             page_id = parts[0]
             page = handler._load_page(page_id)
             if page is None:

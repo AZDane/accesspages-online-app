@@ -191,6 +191,11 @@ class Runtime:
         atomic(capabilities_path,json.dumps(capabilities));os.chown(capabilities_path,USERS['guest'],GROUP)
         atomic(ROOT/'broker/page-capabilities.json',json.dumps({page:hashlib.sha256(value.encode()).hexdigest() for page,value in capabilities.items()}))
         os.chown(ROOT/'broker/page-capabilities.json',USERS['broker'],GROUP)
+        # Admin owns activity and notification policy. Give it only capability
+        # hashes; the guest process uses its existing per-page credentials.
+        admin_capabilities=ROOT/'admin/page-capabilities.json'
+        atomic(admin_capabilities,json.dumps({page:hashlib.sha256(value.encode()).hexdigest() for page,value in capabilities.items()}))
+        os.chown(admin_capabilities,USERS['admin'],GROUP)
         ca=os.getenv('NHP_SERVICE_CA_FILE')
         if ca:atomic(ROOT/'public/service-ca.crt',Path(ca).read_text(),0o644)
         common={'ACCESS_TRANSPORT':'nhp','NHP_INSTALLATION_ROUTING':'1',
@@ -208,10 +213,13 @@ class Runtime:
         self.start('admin',['python3',str(GATEWAY/'server.py')],{**common,
             'GATEWAY_ROLE':'admin','GATEWAY_DATA_DIR':str(ROOT/'admin'),'PORT':'8081',
             'ADMIN_TOKEN':self.admin_token,'HA_BROKER_TOKEN':self.broker_admin,
+            'PAGE_CAPABILITY_REGISTRY_FILE':str(admin_capabilities),
             'MACHINE_DIR':str(self.installation.machine_dir)})
         self.start('guest',['python3',str(GATEWAY/'server.py')],{**common,
             'GATEWAY_ROLE':'guest','GATEWAY_DATA_DIR':str(ROOT/'guest'),'PORT':'8082',
             'HA_BROKER_TOKEN':'page-scoped-capabilities-required',
+            'ACTIVITY_BROKER_URL':'http://127.0.0.1:8081',
+            'VERIFICATION_BROKER_URL':'http://127.0.0.1:8081',
             'NHP_PAGE_CAPABILITIES_FILE':str(capabilities_path)})
         config=f'''pid {ROOT}/tls/nginx.pid;
 error_log stderr warn;

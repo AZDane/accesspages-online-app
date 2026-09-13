@@ -1,3 +1,13 @@
+# 0.1.0-beta.10
+
+- Restore individual guest activity and first-access/action alerts through the trusted local broker.
+- Add optional invitation emailing using the owner's SMTP, independently of Google/email verification. If delivery fails, keep the created invitation available for manual sharing.
+- Keep SMTP settings local for invitations and owner alerts; do not forward them to OpenNHP Service. Guest identity verification remains hosted and requires the operator's provider setup.
+- Require the signed verification method and recipient to match the local guest policy. Reject simulated verification and invalidate sessions when that policy changes.
+- Fix invitation-form validation and retry behavior, and use Access Pages/OpenNHP naming throughout the app.
+- Preserve enrollment, pages, guests and queued revocations. Existing browser sessions require a fresh AccessLink handoff; a consumed one-time or expired link needs a new invitation.
+- Continue using demo devices only. No Home Assistant API access, live-device controls or HA Companion notifications are enabled in this beta.
+
 # 0.1.0-beta.9
 
 - Keep the local administration page and guest list available through trusted HA Ingress when the remote tunnel is offline and local admin services are running.

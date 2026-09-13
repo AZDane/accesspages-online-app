@@ -134,6 +134,9 @@ def handle_post(handler, path, payload, runtime):
         return
 
     if path == "/api/internal/email/verification":
+        if runtime.nhp.ENABLED:
+            handler._send_json(404, {"error": "not found"})
+            return
         page_id = str(payload.get("page_id", ""))
         if not handler._is_page_broker(page_id):
             handler._send_json(runtime.HTTPStatus.UNAUTHORIZED, {"error": "not found"})

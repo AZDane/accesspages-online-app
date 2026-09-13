@@ -13,6 +13,21 @@ from urllib.request import Request, urlopen
 AUTHORIZED_NHP_PAGE = ContextVar('authorized_nhp_page', default='')
 
 
+def nhp_page_capability(page_id=""):
+    """Select a local capability only for the page authenticated this request."""
+    authorized = AUTHORIZED_NHP_PAGE.get()
+    if not authorized or (page_id and page_id != authorized):
+        raise HomeAssistantError("Authorized page required for broker")
+    try:
+        path = os.environ["NHP_PAGE_CAPABILITIES_FILE"]
+        value = json.loads(Path(path).read_text())[authorized]
+        if not isinstance(value, str) or len(value) != 43:
+            raise ValueError()
+        return authorized, value
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise HomeAssistantError("Page capability unavailable") from error
+
+
 CURATED_ACTIONS = {
     "lock": {
         "lock": "Lock",
@@ -700,16 +715,7 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
         path = os.getenv('NHP_PAGE_CAPABILITIES_FILE', '')
         if self.broker_role != 'guest' or not path:
             return self.token
-        authorized = AUTHORIZED_NHP_PAGE.get()
-        if not authorized or (page_id and page_id != authorized):
-            raise HomeAssistantError('Authorized page required for HA broker')
-        try:
-            value = json.loads(Path(path).read_text())[authorized]
-            if not isinstance(value, str) or len(value) != 43:
-                raise ValueError()
-            return value
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            raise HomeAssistantError('Page capability unavailable') from error
+        return nhp_page_capability(page_id)[1]
 
     def _request(self, method, path, payload=None):
         data = None

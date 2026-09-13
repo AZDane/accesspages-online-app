@@ -56,7 +56,7 @@
             <dd id="gateway-access_service">Checking…</dd>
           </div>
           <div>
-            <dt>Email delivery</dt>
+            <dt>Local email</dt>
             <dd id="gateway-email">Checking…</dd>
           </div>
           <div>
@@ -68,7 +68,7 @@
             <dd id="gateway-pages">—</dd>
           </div>
           <div>
-            <dt>Connectors</dt>
+            <dt>Tunnels</dt>
             <dd id="gateway-connectors">Checking…</dd>
           </div>
           <div>
@@ -316,22 +316,22 @@
           </label>
 
           <fieldset class="wide nhp-verification-fieldset">
-            <legend>NHP verification before access</legend>
+            <legend>Guest verification</legend>
             <label class="wide">
               <span>Verification method</span>
               <select id="nhp-verification" aria-describedby="nhp-verification-help">
-                <option value="none">None — valid AccessLink opens directly</option>
+                <option value="none">None — invitation opens directly</option>
                 <option value="google">Google sign-in</option>
                 <option value="email">Email code</option>
               </select>
             </label>
-            <p id="nhp-verification-help">NHP checks the AccessLink on the first knock. No additional verification is required.</p>
+            <p id="nhp-verification-help">Anyone with a valid invitation can open this page.</p>
             <label id="verification-email-field" class="wide hidden">
               <span>Invited guest email</span>
               <input id="verification-email" type="email" maxlength="254"
                      autocomplete="email" placeholder="guest@example.com">
             </label>
-            <small>When selected, verification must succeed before AC opens access to FRPS and the Guest Page. Google verifies the invited account. Email codes use your saved SMTP settings; without settings, the demo shows a simulated code.</small>
+            <small>Verification is handled by OpenNHP Service. The guest must use the invited email address.</small>
           </fieldset>
 
           <fieldset class="lifetime-fieldset">
@@ -367,19 +367,24 @@
 
           <label class="one-time-toggle">
             <span>
+              <strong>Email invitation using my SMTP</strong>
+              <small id="invitation-email-help">Configure local SMTP to send invitations directly from the app.</small>
+            </span>
+            <input id="send-invitation-email" type="checkbox">
+          </label>
+          <label id="invitation-email-field" class="wide hidden">
+            <span>Invitation recipient</span>
+            <input id="invitation-email" type="email" maxlength="254" autocomplete="email" placeholder="guest@example.com">
+          </label>
+
+          <label class="one-time-toggle">
+            <span>
               <strong>One-time use</strong>
               <small>Checked: this link works once. Unchecked: it works until expiry or revocation.</small>
             </span>
             <input id="one-time-use" type="checkbox" checked>
           </label>
 
-          <label class="one-time-toggle hidden">
-            <span>
-              <strong>Require guest verification</strong>
-              <small id="verification-help">Send a one-time code to the guest before showing controls.</small>
-            </span>
-            <input id="verification-required" type="checkbox">
-          </label>
           <label class="one-time-toggle">
             <span>
               <strong>Alert me about guest activity</strong>
@@ -438,16 +443,16 @@
     <div class="user-dialog-shell">
       <header class="picker-header">
         <div>
-          <p class="eyebrow">Gateway email</p>
-          <h2>Email delivery & alerts</h2>
+          <p class="eyebrow">Local alerts</p>
+          <h2>Local invitations & owner alerts</h2>
         </div>
         <button id="close-email-dialog" class="icon-button" type="button"
                 aria-label="Close email settings">×</button>
       </header>
       <form id="email-form" class="user-dialog-content email-form">
         <p>
-          Configure your own email provider for verification messages and
-          administrator guest-activity alerts. The
+          These settings send guest invitations and administrator activity alerts. Guest
+          Google sign-in and email verification run in OpenNHP Service. The
           password is stored locally, is never returned by the API, and is not
           sent to OpenNHP Service or Home Assistant.
         </p>
