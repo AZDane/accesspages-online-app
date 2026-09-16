@@ -1,7 +1,7 @@
 # Access Pages Online test
 
 Install this experimental app only on an authorized beta Home Assistant system.
-It is managed through HA Ingress. Beta.11 adds optional real sensor/light access
+It is managed through HA Ingress. Beta.12 adds optional real sensor/light access
 while retaining demo mode as the default.
 
 ## Configuration

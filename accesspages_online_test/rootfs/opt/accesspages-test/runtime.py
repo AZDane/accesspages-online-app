@@ -129,6 +129,39 @@ class Runtime:
             self.message='Enrolled. Preparing the customer TLS certificate.'
             return {'enrolled':True,'gateway_id':route['gateway_id']}
 
+    def reset_service_connection(self):
+        """Remove local service identities while preserving owner configuration."""
+        request=ROOT/'admin/reset-connection.request'
+        for role in list(self.children):self.stop(role)
+        for path in (
+            self.installation.root,
+            ROOT/'connector',
+            ROOT/'tls',
+            ROOT/'public',
+        ):
+            if path.is_symlink() or path.is_file():path.unlink(missing_ok=True)
+            elif path.exists():shutil.rmtree(path)
+        for path in (
+            ROOT/'admin/page-capabilities.json',
+            ROOT/'broker/page-capabilities.json',
+            ROOT/'guest/page-capabilities.json',
+            ROOT/'guest/pages',
+        ):
+            if path.is_symlink() or path.is_file():path.unlink(missing_ok=True)
+            elif path.exists():shutil.rmtree(path)
+        for role in ('connector','tls'):
+            directory=ROOT/role;directory.mkdir(mode=0o700)
+            os.chown(directory,USERS[role],GROUP)
+        (ROOT/'public').mkdir(mode=0o755)
+        self.installation=Installation(
+            ROOT/'admin/installation',
+            server_address=configured_server_address(),
+        )
+        self.last_connector_status=0;self.last_certificate=0;self.last_authority=0
+        self.last_error=None
+        self.message='Paste the enrollment API token to connect this Home Assistant.'
+        request.unlink(missing_ok=True)
+
     def public_status(self):
         ready=all(self.children.get(r) and self.children[r].poll() is None and time.monotonic()-self.started.get(r,0)>2 for r in USERS)
         if ready:
@@ -301,6 +334,8 @@ http {{
     def loop(self):
         while not self.stopping:
             with self.lock:
+                if (ROOT/'admin/reset-connection.request').exists():
+                    self.reset_service_connection()
                 if (self.installation.root/'binding.json').exists():
                     try:self.prepare()
                     except Exception as error:

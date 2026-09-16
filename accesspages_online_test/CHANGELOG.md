@@ -1,3 +1,8 @@
+# 0.1.0-beta.12
+
+- Complete the OpenNHP Service reset handoff: stop the isolated Gateway processes, remove local connection identities, certificates and page capabilities, and return to one-use enrollment.
+- Preserve page layouts and owner email/alert settings while rotating page capabilities and removing the old local connection state.
+
 # 0.1.0-beta.11
 
 - Add optional Home Assistant sensor, binary-sensor and light access through the isolated local broker; demo mode remains the default.
