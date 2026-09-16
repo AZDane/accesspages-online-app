@@ -3,6 +3,7 @@
 Run on a Linux CI runner with the app image and its AppArmor profile loaded.
 No Home Assistant token, cloud credentials, host files, or public ports are used.
 """
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -10,9 +11,11 @@ import sys
 import time
 
 
+DOCKER = ['docker']
+
 def docker(*args, check=True):
     return subprocess.run(
-        ['docker', *args], check=check, capture_output=True, text=True, timeout=20,
+        [*DOCKER, *args], check=check, capture_output=True, text=True, timeout=20,
     )
 
 
@@ -56,7 +59,7 @@ def check_startup(image, name, *, apparmor=False):
                     assert protection.stdout.strip() == 'readable\ncode-write-denied'
                     result['app_code_write_denied'] = True
                 demo = subprocess.run(
-                    ['docker', 'exec', '-i', '--env',
+                    [*DOCKER, 'exec', '-i', '--env',
                      'PYTHONPATH=/opt/accesspages-test:/opt/accesspages-test/guest_gateway',
                      ident, 'python3', '-B', '-'],
                     input=Path(__file__).with_name('test_demo_data.py').read_text(),
@@ -65,7 +68,7 @@ def check_startup(image, name, *, apparmor=False):
                 result['demo_tests_passed'] = demo.returncode == 0
                 result['demo_tests_output'] = demo.stderr[-12000:]
                 enrollment = subprocess.run(
-                    ['docker', 'exec', '-i', '--env',
+                    [*DOCKER, 'exec', '-i', '--env',
                      'PYTHONPATH=/opt/accesspages-test:/opt/accesspages-test/guest_gateway',
                      ident, 'python3', '-B', '-'],
                     input=Path(__file__).with_name('test_enrollment.py').read_text(),
@@ -85,9 +88,19 @@ def check_startup(image, name, *, apparmor=False):
 
 
 if __name__ == '__main__':
-    image = sys.argv[1]
-    results = [
-        check_startup(image, 'default-container'),
-        check_startup(image, 'app-apparmor', apparmor=True),
-    ]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('image')
+    parser.add_argument('--case', choices=['all', 'default-container', 'app-apparmor'], default='all')
+    parser.add_argument('--docker-wrapper', type=Path, help='Explicit lab wrapper; all operations use this verified dispatcher')
+    args = parser.parse_args()
+    if args.docker_wrapper:
+        wrapper = args.docker_wrapper.resolve(strict=True)
+        DOCKER = [str(wrapper), 'docker']
+    results = []
+    if args.case in ('all', 'default-container'):
+        results.append(check_startup(args.image, 'default-container'))
+    if args.case in ('all', 'app-apparmor'):
+        results.append(check_startup(args.image, 'app-apparmor', apparmor=True))
+    if args.case != 'all':
+        print(json.dumps({'selection': args.case, 'full_startup_acceptance': 'not established by a single case'}))
     raise SystemExit(0 if all(results) else 1)

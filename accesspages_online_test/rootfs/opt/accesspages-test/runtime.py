@@ -17,6 +17,7 @@ import time
 from urllib.parse import urlparse
 
 from installation import Installation, atomic
+from app_options import read_options, device_mode, discovery_environment
 
 ROOT=Path(os.getenv('ACCESSPAGES_DATA_DIR','/data'))
 APP=Path(__file__).resolve().parent
@@ -26,6 +27,22 @@ USERS={'admin':1001,'guest':1002,'broker':1003,'tls':1004,'connector':1005}
 # The installable NHP test app includes this immutable marker. Live-HA lab
 # fixtures omit it; injected credentials cannot switch the test app to live HA.
 DEMO_DATA=(APP/'demo-data').is_file()
+
+def configured_device_mode():
+    # Existing immutable demo builds remain unable to use HA credentials.
+    # Supervisor upgrades of the pilot build default to demo until selected.
+    default='demo' if (ROOT/'options.json').exists() or (APP/'pilot-features').exists() else 'homeassistant'
+    return device_mode(read_options(ROOT),demo_only=DEMO_DATA,default=default)
+
+
+def gateway_environment():
+    version=(APP/'version').read_text().strip() if (APP/'version').is_file() else 'development'
+    return {
+        **discovery_environment(read_options(ROOT)),
+        'GATEWAY_DEVICE_DATA':configured_device_mode(),
+        'GATEWAY_FEATURE_PROFILE':'sensors_lights' if (APP/'pilot-features').exists() else os.getenv('GATEWAY_FEATURE_PROFILE','full'),
+        'GATEWAY_VERSION':version,
+    }
 
 def configured_server_address():
     if os.getenv('NHP_SERVER_ADDRESS'):return os.environ['NHP_SERVER_ADDRESS']
@@ -39,8 +56,8 @@ def configured_server_address():
     return value.strip() if value else None
 
 
-def broker_backend_environment():
-    if DEMO_DATA:
+def broker_backend_environment(mode=None):
+    if (mode or configured_device_mode())=='demo':
         return {'HA_BROKER_BACKEND':'demo'}
     ha_token=os.getenv('HA_TOKEN') or os.getenv('SUPERVISOR_TOKEN')
     if os.getenv('HA_TOKEN_FILE'):
@@ -53,6 +70,8 @@ def broker_backend_environment():
 class Runtime:
     def __init__(self):
         os.umask(0o077)
+        self.product=gateway_environment()
+        self.device_mode=self.product['GATEWAY_DEVICE_DATA']
         ROOT.mkdir(exist_ok=True,mode=0o755);ROOT.chmod(0o755)
         for role,uid in USERS.items():
             directory=ROOT/role;directory.mkdir(exist_ok=True,mode=0o700)
@@ -121,7 +140,7 @@ class Runtime:
         message='Starting local app services.' if not ready and self.message.startswith('Ready') else self.message
         return {'message':message,'enrolled':(self.installation.root/'binding.json').exists(),
                 'ready':bool(ready),'admin_ready':self.admin_ready(),
-                'device_data':'demo' if DEMO_DATA else 'homeassistant'}
+                'device_data':self.device_mode}
 
     def admin_ready(self):
         # Owner controls must remain reachable through HA Ingress when the
@@ -198,17 +217,18 @@ class Runtime:
         os.chown(admin_capabilities,USERS['admin'],GROUP)
         ca=os.getenv('NHP_SERVICE_CA_FILE')
         if ca:atomic(ROOT/'public/service-ca.crt',Path(ca).read_text(),0o644)
-        common={'ACCESS_TRANSPORT':'nhp','NHP_INSTALLATION_ROUTING':'1',
+        product=self.product
+        common={**product,'ACCESS_TRANSPORT':'nhp','NHP_INSTALLATION_ROUTING':'1',
                 'NHP_GATEWAY_ORIGIN':origin,'NHP_LANDING_ORIGIN':json.loads((self.installation.root/'profile.json').read_text())['landing_origin'],
                 'NHP_BINDING_FILE':str(ROOT/'public/binding.json'),
                 'NHP_VERIFY_KEY_FILE':str(ROOT/'public/handoff-public-key'),
-                'HOST':'127.0.0.1','ACCESS_LINK_MAX_LIFETIME_DAYS':'1',
+                'HOST':'127.0.0.1',
                 'PAGE_FILE_MODE':'640','HA_BROKER_URL':'http://127.0.0.1:8083'}
-        self.phase='demo data' if DEMO_DATA else 'Home Assistant connection'
+        self.phase='demo data' if self.device_mode=='demo' else 'Home Assistant connection'
         self.start('broker',['python3',str(GATEWAY/'ha_broker.py')],{
-            'HA_BROKER_HOST':'127.0.0.1','HA_BROKER_PORT':'8083',
+            **product,'HA_BROKER_HOST':'127.0.0.1','HA_BROKER_PORT':'8083',
             'HA_BROKER_TOKEN':self.broker_unused,'HA_BROKER_ADMIN_TOKEN':self.broker_admin,
-            **broker_backend_environment(),'HA_BROKER_POLICY_DIR':str(pages),
+            **broker_backend_environment(self.device_mode),'HA_BROKER_POLICY_DIR':str(pages),
             'HA_PAGE_CAPABILITY_REGISTRY':str(ROOT/'broker/page-capabilities.json')})
         self.start('admin',['python3',str(GATEWAY/'server.py')],{**common,
             'GATEWAY_ROLE':'admin','GATEWAY_DATA_DIR':str(ROOT/'admin'),'PORT':'8081',
@@ -307,6 +327,7 @@ class Ingress(BaseHTTPRequestHandler):
         if self.client_address[0] not in runtime.allowed_proxies:self.send(403,{'error':'Use Home Assistant Ingress'});return
         if self.command not in ('GET','HEAD') and self.headers.get('X-Access-Pages-CSRF')!=runtime.csrf:self.send(403,{'error':'Reload the local app'});return
         try:
+            mode=getattr(runtime,'device_mode',None) or configured_device_mode()
             length=int(self.headers.get('Content-Length','0'))
             if not 0<=length<=512000:raise ValueError()
             body=self.rfile.read(length) if length else b''
@@ -322,7 +343,7 @@ class Ingress(BaseHTTPRequestHandler):
                 if runtime.public_status().get('enrolled'):
                     self.send(200,(APP/'waiting.html').read_bytes(),'text/html; charset=utf-8');return
                 markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.server_address))
-                if DEMO_DATA:
+                if mode=='demo':
                     markup=markup.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')
                 self.send(200,markup.encode(),'text/html; charset=utf-8');return
             target='/admin' if path=='/' else self.path
@@ -334,7 +355,7 @@ class Ingress(BaseHTTPRequestHandler):
                 kind=response.getheader('Content-Type','application/json')
                 if 'text/html' in kind:
                     payload=payload.replace(b'</head>',f'<meta name="access-pages-csrf" content="{runtime.csrf}"></head>'.encode())
-                    if DEMO_DATA:
+                    if mode=='demo':
                         payload=payload.replace(b'<body>', b'<body><p role="note" style="padding:12px;text-align:center">NHP test: demo data only. No Home Assistant device access. Demo actions reset when the app restarts.</p>')
                 self.send(response.status,payload,kind)
             finally:connection.close()

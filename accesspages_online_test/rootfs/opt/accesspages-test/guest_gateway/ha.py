@@ -1,4 +1,5 @@
 import json
+import feature_policy
 import math
 import os
 from pathlib import Path
@@ -239,6 +240,11 @@ def normalize_capabilities(domain, state, attributes, action_services=()):
 
     if domain == "light" and "turn_on" in action_services:
         brightness = _finite_number(attributes.get("brightness"))
+        if feature_policy.limited():
+            if not feature_policy.brightness_supported(attributes):
+                brightness = None
+            elif brightness is None:
+                brightness = 255
         if brightness is not None and 0 <= brightness <= 255:
             capabilities["brightness"] = {
                 "min": 1,
@@ -329,6 +335,8 @@ class HomeAssistantClient:
         device_class: str = "",
         area_id: str = "",
     ) -> bool:
+        if not feature_policy.entity_allowed(entity_id, domain):
+            return False
         if (
             entity_id in self.exclude_entities
             or domain in self.exclude_domains
@@ -591,7 +599,7 @@ class HomeAssistantClient:
 
             entity_state = state.get("state")
             if (
-                entity_state in HIDDEN_STATES
+                entity_state in HIDDEN_STATES and not feature_policy.limited()
                 and domain not in {"button", "input_button"}
             ):
                 continue
@@ -601,6 +609,8 @@ class HomeAssistantClient:
             actions = []
 
             for service_name, display_name in curated_services.items():
+                if not feature_policy.service_allowed(domain, service_name):
+                    continue
                 # Sensors are read-only.  The synthetic "view" action allows
                 # the admin UI to include them without exposing a HA service.
                 if domain == "sensor" and service_name == "view":
@@ -655,7 +665,7 @@ class HomeAssistantClient:
                     "type": device_class or domain,
                     "area_id": area.get("area_id", ""),
                     "area_name": area.get("area_name", ""),
-                    "attributes": attributes,
+                    "attributes": feature_policy.attributes(attributes),
                     "actions": actions,
                 }
             )
@@ -674,6 +684,7 @@ class HomeAssistantClient:
             "domain_counts": domain_counts,
             "allowed_domains": sorted(domain_counts),
             "policy": {
+                "feature_profile": feature_policy.PROFILE,
                 "restricted": self.policy_restricted,
                 "include_areas": sorted(self.include_areas),
                 "include_domains": sorted(self.include_domains),

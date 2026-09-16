@@ -57,6 +57,46 @@ const userDialog = document.getElementById("user-dialog");
 const closeUserDialogButton = document.getElementById("close-user-dialog");
 const access_linkLabelInput = document.getElementById("access_link-label");
 const nhpVerificationInput = document.getElementById("nhp-verification");
+const verificationStatus = document.getElementById("nhp-verification-status");
+const refreshVerificationStatus = document.getElementById("refresh-verification-status");
+let verificationMethods = {none: true, google: false, email: false};
+let verificationStatusRequest = 0;
+function applyVerificationMethods() {
+ for (const option of nhpVerificationInput.options) {
+  option.disabled = verificationMethods[option.value] !== true;
+ }
+}
+async function loadVerificationStatus() {
+ const request = ++verificationStatusRequest;
+ verificationMethods = {none: true, google: false, email: false};
+ applyVerificationMethods();
+ refreshVerificationStatus.disabled = true;
+ verificationStatus.textContent = "Checking hosted verification options…";
+ try {
+  const response = await adminApi.fetch("api/admin/verification-status", {cache: "no-store"});
+  const data = await responseJson(response, "Could not check verification options");
+  if (request !== verificationStatusRequest) return;
+  if (!response.ok || data.version !== 1 || !data.methods ||
+      !["none", "google", "email"].every(key => typeof data.methods[key] === "boolean") || data.methods.none !== true) {
+   throw new Error("Verification options could not be checked. Refresh to retry.");
+  }
+  verificationMethods = data.methods;
+  const configured = [data.methods.google ? "Google" : "", data.methods.email ? "email codes" : ""].filter(Boolean);
+  verificationStatus.textContent = configured.length
+   ? "Configured in OpenNHP Service: " + configured.join(" and ") + "."
+   : "Google and email verification are not configured in OpenNHP Service.";
+ } catch {
+  if (request !== verificationStatusRequest) return;
+  verificationStatus.textContent = "Verification options could not be checked. Refresh to retry. Your selected requirement is preserved.";
+ } finally {
+  if (request === verificationStatusRequest) {
+   applyVerificationMethods();
+   refreshVerificationStatus.disabled = false;
+  }
+ }
+}
+refreshVerificationStatus.addEventListener("click", loadVerificationStatus);
+applyVerificationMethods();
 function updateNhpVerification() {
  const method = nhpVerificationInput.value;
  verificationEmailField.classList.toggle("hidden", method === "none");
@@ -392,6 +432,9 @@ async function loadGatewayStatus() {
     }
 
     gatewayVersion.textContent = data.version || "Unknown";
+    document.getElementById("gateway-device-data").textContent = data.device_data === "demo"
+      ? "Demo devices — change in app Configuration to use Home Assistant"
+      : data.device_data === "homeassistant" ? "Home Assistant" : "Unknown";
     gatewayHealth.textContent =
       data.status === "ok" ? "Online" : "Unavailable";
     gatewayService.textContent = data.access_service_api_configured
@@ -1216,6 +1259,7 @@ function openPicker() {
   pickerSearchInput.value = "";
   activePickerCategory = null;
   const policy = discovery.policy || {};
+  const scope = policy.feature_profile === "sensors_lights" ? "Sensor/light pilot. " : "";
   if (policy.restricted) {
     const limits = [
       policy.include_areas?.length
@@ -1232,10 +1276,10 @@ function openPicker() {
         : "",
     ].filter(Boolean);
     pickerPolicy.textContent =
-      `Choices restricted by configuration (${limits.join("; ")}).`;
+      scope + `Choices restricted by configuration (${limits.join("; ")}).`;
   } else {
     pickerPolicy.textContent =
-      "Showing every entity supported by the gateway.";
+      scope + "Showing every entity supported by the gateway.";
   }
   renderPicker();
   pickerDialog.showModal();
@@ -1318,7 +1362,7 @@ function configureLifetimeOptions() {
   lifetimeLimit.textContent =
     `Maximum configured lifetime: ${access_linkMaxLifetimeDays} ` +
     `${access_linkMaxLifetimeDays === 1 ? "day" : "days"}. ` +
-    "AccessLink lifetime must fit the limit configured for this lab.";
+    "Longer invitations are not available with this service configuration.";
   updateCustomLifetimeLimit();
 }
 
@@ -1442,10 +1486,10 @@ function buildSharePanel(guestName, activationUrl) {
   explanation.className = "share-note";
   explanation.textContent = navigator.share
     ? "Use Share to choose Messages, Mail, AirDrop, or another app. QR codes " +
-      "are created on this device; the Gateway does not send recipient data."
+      "are created on this device. These sharing buttons use your chosen app."
     : "QR codes are created on this device. Email opens with the message " +
       "filled in. Text opens Messages and copies the message for you to paste. " +
-      "The Gateway does not send or store recipients.";
+      "These sharing buttons use your email or messaging app. SMTP delivery is selected when creating the invitation.";
 
   const message = shareMessage(guestName, activationUrl);
   const actions = document.createElement("div");
@@ -1840,6 +1884,7 @@ function openUserDialog() {
   verificationEmailField.classList.add("hidden");
   access_linkResult.classList.add("hidden");
   userDialog.showModal();
+  void loadVerificationStatus();
   access_linkLabelInput.focus();
 }
 
@@ -1868,6 +1913,11 @@ async function generateAccessLink() {
   if (nhpVerificationInput.value !== "none" && (!verificationEmailInput.value.trim() || !verificationEmailInput.checkValidity())) {
     setStatus("Enter the invited guest email for verification.", "error");
     verificationEmailInput.focus();
+    return;
+  }
+
+  if (verificationMethods[nhpVerificationInput.value] !== true) {
+    setStatus("The selected verification method is unavailable. Refresh verification options before creating this invitation.", "error");
     return;
   }
   const verificationEmail = verificationEmailInput.value.trim();
@@ -2099,6 +2149,8 @@ function prepareEditor(page, existing) {
   pageIdInput.disabled = existing;
   descriptionInput.value = page.description || "";
   proximityEnabledInput.checked = Boolean(page.proximity?.enabled);
+  proximityEnabledInput.disabled = discovery.policy?.feature_profile === "sensors_lights" && !proximityEnabledInput.checked;
+  proximityEnabledInput.closest(".proximity-settings").classList.toggle("hidden", discovery.policy?.feature_profile === "sensors_lights" && !proximityEnabledInput.checked);
   proximityRadiusInput.value = page.proximity?.radius_meters || 500;
   proximityRadiusField.classList.toggle(
     "hidden",
@@ -2366,7 +2418,7 @@ async function loadPages() {
   pages = data.pages;
   updateGatewayCounts();
   accessServiceApiConfigured = Boolean(data.access_service_api_configured);
-  access_linkMaxLifetimeDays = Number(data.access_link_max_lifetime_days) || 3;
+  access_linkMaxLifetimeDays = Number(data.access_link_max_lifetime_days) || 30;
   configureLifetimeOptions();
   renderPageList();
 }

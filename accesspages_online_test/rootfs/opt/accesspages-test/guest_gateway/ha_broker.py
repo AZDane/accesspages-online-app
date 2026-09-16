@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 import math
 import os
+import feature_policy
 from pathlib import Path
 
 from ha import (
@@ -27,11 +28,16 @@ PAGE_CAPABILITY_REGISTRY = Path(os.getenv(
     "HA_PAGE_CAPABILITY_REGISTRY", "/policy-capabilities/page-capabilities.json"
 ))
 BACKEND = os.getenv("HA_BROKER_BACKEND", "homeassistant")
+DISCOVERY_POLICY = {
+    name: frozenset(value.strip() for value in os.getenv("HA_ENTITY_" + name.upper(), "").split(",") if value.strip())
+    for name in ("include_areas", "include_domains", "include_device_classes", "include_entities",
+                 "exclude_areas", "exclude_domains", "exclude_device_classes", "exclude_entities")
+}
 if BACKEND == "demo":
     from demo_ha import DemoHomeAssistantClient
-    HA_CLIENT = DemoHomeAssistantClient()
+    HA_CLIENT = DemoHomeAssistantClient(**DISCOVERY_POLICY)
 elif BACKEND == "homeassistant":
-    HA_CLIENT = HomeAssistantClient(os.environ["HA_BASE_URL"], os.environ["HA_TOKEN"])
+    HA_CLIENT = HomeAssistantClient(os.environ["HA_BASE_URL"], os.environ["HA_TOKEN"], **DISCOVERY_POLICY)
 else:
     raise RuntimeError("Unknown device data backend")
 
@@ -58,6 +64,10 @@ def _resource_action(page, resource_id, action_id):
     )
     if resource is None:
         raise BrokerPolicyError("Resource not found", HTTPStatus.NOT_FOUND)
+    try:
+        feature_policy.validate_page(page)
+    except ValueError as error:
+        raise BrokerPolicyError(str(error), HTTPStatus.FORBIDDEN) from error
     action = next(
         (item for item in resource["actions"] if item["id"] == action_id),
         None,
@@ -70,6 +80,8 @@ def _resource_action(page, resource_id, action_id):
 
 
 def camera_image(page_id, resource_id):
+    if feature_policy.limited():
+        raise BrokerPolicyError("Cameras are not enabled in this pilot", HTTPStatus.FORBIDDEN)
     page = _page(page_id)
     resource = next(
         (item for item in page["resources"] if item["id"] == resource_id),
@@ -97,16 +109,45 @@ def _matches_step(value, minimum, maximum, step):
     return math.isclose(quotient, round(quotient), abs_tol=1e-7)
 
 
+def authorized_states(requested):
+    if not feature_policy.limited():
+        return HA_CLIENT.get_states(requested)
+    if any(not isinstance(item, str) or not feature_policy.entity_allowed(item, item.split(".")[0]) for item in requested):
+        raise BrokerPolicyError("Entity is outside the sensor/light pilot", HTTPStatus.FORBIDDEN)
+    states = HA_CLIENT.get_states(requested)
+    areas = HA_CLIENT.get_entity_areas() if HA_CLIENT.include_areas or HA_CLIENT.exclude_areas else {}
+    result = []
+    for state in states:
+        entity_id = state.get("entity_id", "")
+        if entity_id not in requested:
+            continue
+        attrs = state.get("attributes") or {}
+        if not HA_CLIENT.entity_allowed(entity_id, entity_id.split(".")[0], attrs.get("device_class", ""), areas.get(entity_id, {}).get("area_id", "")):
+            raise BrokerPolicyError("Entity is excluded by app configuration", HTTPStatus.FORBIDDEN)
+        result.append({"entity_id": entity_id, "state": state.get("state", "unavailable"), "attributes": feature_policy.attributes(attrs)})
+    return result
+
+
 def _service_data(resource, action, supplied):
     if not isinstance(supplied, dict):
         raise BrokerPolicyError("Parameters must be an object")
-    states = HA_CLIENT.get_states({resource["entity_id"]})
+    try:
+        feature_policy.validate_resource(resource)
+        feature_policy.validate_parameters(resource["domain"], action["service"], supplied)
+    except ValueError as error:
+        raise BrokerPolicyError(str(error)) from error
+    states = authorized_states({resource["entity_id"]})
     state = next(
         (item for item in states if item.get("entity_id") == resource["entity_id"]),
         None,
     )
     if state is None:
         raise BrokerPolicyError("Assigned entity not found", HTTPStatus.NOT_FOUND)
+    if feature_policy.limited():
+        if state.get("state") in {"unknown", "unavailable"}:
+            raise BrokerPolicyError("Assigned entity is unavailable", HTTPStatus.CONFLICT)
+        if "brightness_pct" in supplied and not feature_policy.brightness_supported(state.get("attributes") or {}):
+            raise BrokerPolicyError("This light does not support brightness")
     capabilities = normalize_capabilities(
         resource["domain"],
         state.get("state"),
@@ -202,6 +243,8 @@ def execute_page_action(page_id, resource_id, action_id, parameters):
 
 
 def verify_page_proximity(page_id, reading):
+    if feature_policy.limited():
+        raise BrokerPolicyError("Location-based controls are not enabled in this pilot", HTTPStatus.FORBIDDEN)
     page = _page(page_id)
     policy = page.get("proximity", {})
     if not policy.get("enabled", False):
@@ -343,9 +386,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             payload = self._payload()
+            if feature_policy.limited():
+                allowed = {
+                    "/v1/states": {"entity_ids"},
+                    "/v1/page-action": {"page_id", "resource_id", "action_id", "parameters"},
+                    "/v1/discovery": {"force"},
+                    "/v1/notification-targets": set(),
+                    "/v1/send-notification": {"target", "title", "message"},
+                }
+                if self.path not in allowed:
+                    raise BrokerPolicyError("This operation is not enabled in this pilot", HTTPStatus.FORBIDDEN)
+                if set(payload) - allowed[self.path]:
+                    raise BrokerPolicyError("Unknown request fields")
             if self.path == "/v1/states":
                 requested = payload.get("entity_ids")
-                if not isinstance(requested, list) or not requested:
+                if not isinstance(requested, list) or not requested or not all(isinstance(item, str) for item in requested):
                     raise BrokerPolicyError("Entity IDs are required")
                 assigned = {
                     resource["entity_id"]
@@ -357,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if any(item not in assigned for item in requested):
                     raise BrokerPolicyError("Entity is not assigned", HTTPStatus.FORBIDDEN)
-                states = HA_CLIENT.get_states(set(requested))
+                states = authorized_states(set(requested))
                 self._send(200, states)
             elif self.path == "/v1/camera-image":
                 body, content_type = camera_image(

@@ -1,6 +1,7 @@
 """Authoritative policy enforcement and dispatch for guest HA actions."""
 
 import math
+import feature_policy
 
 from ha import HomeAssistantError
 
@@ -22,6 +23,13 @@ def execute_public_action(
     normalize_capabilities,
     audit,
 ):
+    try:
+        feature_policy.validate_page(page)
+        if feature_policy.limited() and (not isinstance(payload, dict) or "proximity" in payload):
+            raise ValueError("Unknown action parameters")
+    except ValueError as error:
+        handler._send_json(403, {"error": str(error)})
+        return
     if not handler._require_proximity(page, payload):
         return
     payload = {
@@ -79,6 +87,12 @@ def execute_public_action(
     # exists only so an administrator can include them on a page.
     if resource["domain"] == "sensor" or action["service"] == "view":
         handler._send_json(403, {"error": "This resource is read-only"})
+        return
+
+    try:
+        feature_policy.validate_parameters(resource["domain"], action["service"], payload)
+    except ValueError as error:
+        handler._send_json(400, {"error": str(error)})
         return
 
     service_data = {}

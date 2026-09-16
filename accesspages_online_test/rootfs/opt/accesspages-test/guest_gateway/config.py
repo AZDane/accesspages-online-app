@@ -61,13 +61,7 @@ if POLICY_PUBLISH_URL and not POLICY_PUBLISH_TOKEN:
         "POLICY_PUBLISH_TOKEN is required with POLICY_PUBLISH_URL"
     )
 
-ACCESS_LINK_MAX_LIFETIME_DAYS = int(
-    os.getenv("ACCESS_LINK_MAX_LIFETIME_DAYS", "3")
-)
-if not 1 <= ACCESS_LINK_MAX_LIFETIME_DAYS <= 30:
-    raise RuntimeError(
-        "ACCESS_LINK_MAX_LIFETIME_DAYS must be between 1 and 30"
-    )
+ACCESS_LINK_MAX_LIFETIME_DAYS = 30
 
 # Optional discovery policy. An empty include policy exposes every entity the
 # gateway supports. When any include set is populated, an entity must match at

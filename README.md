@@ -2,7 +2,7 @@
 
 An experimental Home Assistant app for the controlled Access Pages beta. Each HA installation runs its own Guest Gateway and connects outbound to OpenNHP Service. One installation can serve multiple guest pages with separate grants and sessions.
 
-This version tests NHP using a built-in demo lock, light and temperature sensor. It does not request Home Assistant API access or use HA credentials. Device actions change in-memory demo data only and reset when the app restarts. Native enrollment, NHP admission, NHP-FRP, TLS, signed handoffs and page authorization remain real.
+Beta.11 adds Configuration filters and optional real sensor/light access through the local broker. It defaults to demo mode. Native enrollment, NHP admission, NHP-FRP, TLS, signed handoffs and page authorization remain real.
 
 ## Install on a dedicated HA test system
 
@@ -19,17 +19,18 @@ This is a beta for dedicated test installations. A successful container test doe
 
 See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages_online_test/CHANGELOG.md).
 
-## Updating to beta.10
+## Updating to beta.11
 
 Refresh the repository in Home Assistant and update **Access Pages Online test**.
 Keep app data: enrollment, pages, guests and pending revocations are preserved.
 Existing browser sessions need a fresh AccessLink handoff. If an old invitation
 is expired or already consumed, create a new invitation after updating.
 
-Beta.10 restores individual guest activity and optional invitation emailing with
-your local SMTP provider. Hosted Google/email verification requires separate
-operator setup and acceptance; this update does not enable real HA API access.
-The owner account/signup website is separate and is not part of this app release.
+Beta.11 adds optional real sensor, binary-sensor and light access with explicit
+Configuration filters. Demo mode remains the default. It also exposes the
+existing OpenNHP connection reset so a one-use installation credential can be
+tested without deleting page layouts. The owner account website remains a
+separate service.
 
 ## Testing
 

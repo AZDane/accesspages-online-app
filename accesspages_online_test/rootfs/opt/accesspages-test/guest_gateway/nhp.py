@@ -13,6 +13,7 @@ RESOURCE = os.getenv('NHP_DEFAULT_RESOURCE', 'ha-guest-gateway')
 ORIGIN = os.getenv('NHP_GATEWAY_ORIGIN', 'https://gateway-a.localhost:8088')
 LANDING_ORIGIN = os.getenv('NHP_LANDING_ORIGIN', 'https://localhost:8090')
 INSTALLATION_ROUTING = os.getenv('NHP_INSTALLATION_ROUTING') == '1'
+ACCESS_LINK_MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 try:
     PAGE_RESOURCES = json.loads(os.getenv('NHP_PAGE_RESOURCE_MAP', '{}'))
 except json.JSONDecodeError:
@@ -65,13 +66,28 @@ def access_credential(link):
 class NHPClient:
     configured=True
     resource_id=RESOURCE
+    def verification_status(self):
+        result = machine({'op': 'verification_status'})
+        methods = result.get('methods') if isinstance(result, dict) else None
+        if (not isinstance(result, dict)
+                or type(result.get('version')) is not int or result['version'] != 1
+                or not isinstance(methods, dict)
+                or set(methods) != {'none', 'google', 'email'}
+                or any(type(value) is not bool for value in methods.values())
+                or methods['none'] is not True):
+            raise AccessServiceError('Hosted verification status is unavailable')
+        return {'version': 1, 'methods': methods}
     def create_access_link(self, *, target_path, expires_in, one_time_use=False, verification_method="none", verification_email="", **kwargs):
         token=parse_qs(urlparse(target_path).query)['access_token'][0]
         resource = resource_for_target(target_path)
+        try:
+            ttl=int(expires_in[:-1])*{'m':60,'h':3600,'d':86400,'w':604800}[expires_in[-1]]
+        except (KeyError, TypeError, ValueError):
+            raise AccessServiceError('Invalid AccessLink lifetime')
+        if not 1<=ttl<=ACCESS_LINK_MAX_LIFETIME_SECONDS:
+            raise AccessServiceError('Access Pages invitations support up to 30 days')
         if INSTALLATION_ROUTING:
             machine({'op':'assign_page','page_id':resource})
-        ttl=int(expires_in[:-1])*{'m':60,'h':3600,'d':86400,'w':604800}[expires_in[-1]]
-        if not 1<=ttl<=86400:raise AccessServiceError('NHP demo invitations support up to 24 hours')
         result=machine({'op':'mint_access_link','guest_token':token,'resource':resource,'ttl':ttl,'one_time_use':one_time_use,'verification_method':verification_method,'verification_email':verification_email})
         secret=access_credential(result['access_link'])
         ident=hashlib.sha256(secret.encode()).hexdigest()

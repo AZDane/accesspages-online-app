@@ -9,6 +9,8 @@ RUN git clone https://github.com/OpenNHP/opennhp.git core \
     && git clone https://github.com/OpenNHP/nhp-frp.git frp \
     && git -C frp checkout --detach "${NHP_FRP_COMMIT}"
 
+COPY nhp/native-payload-logging.patch nhp/patch-payload-logging.sh /build/
+RUN sh /build/patch-payload-logging.sh /build/core
 COPY nhp/main.go /build/core/endpoints/accesspages_online_test/main.go
 RUN cd /build/core/endpoints \
     && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
@@ -25,7 +27,7 @@ RUN cd /build/frp \
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.10
+ARG BUILD_VERSION=0.1.0-beta.11
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online test" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-test"
 RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \
@@ -36,6 +38,7 @@ RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 ti
 COPY --from=protocol-build /out/machinectl /opt/machinectl
 COPY --from=protocol-build /out/frpc /opt/frpc
 COPY rootfs /
+RUN printf '%s\n' "${BUILD_VERSION}" > /opt/accesspages-test/version
 RUN chmod 0755 /opt/machinectl /opt/frpc /opt/accesspages-test/runtime.py \
     && find /opt/accesspages-test -type d -exec chmod 0755 {} \; \
     && find /opt/accesspages-test -type f -exec chmod 0644 {} \;

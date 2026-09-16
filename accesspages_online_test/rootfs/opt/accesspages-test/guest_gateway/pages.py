@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +55,10 @@ class PageStore:
                 # A restrictive process umask must not remove the configured
                 # Guest read permission. Only the file owner repairs its mode;
                 # the Guest can acquire the read lock without write authority.
-                if os.fstat(fd).st_uid == os.geteuid():
+                metadata = os.fstat(fd)
+                # Even the owner cannot chmod a read-only Docker mount. A
+                # correctly configured lock needs no mutation to acquire it.
+                if metadata.st_uid == os.geteuid() and stat.S_IMODE(metadata.st_mode) != self.file_mode:
                     os.fchmod(fd, self.file_mode)
                 fcntl.flock(fd, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
                 self._guard_state.active = True

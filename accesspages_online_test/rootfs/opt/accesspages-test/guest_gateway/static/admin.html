@@ -52,6 +52,10 @@
             <dd id="gateway-health">Checking…</dd>
           </div>
           <div>
+            <dt>Device data</dt>
+            <dd id="gateway-device-data">Checking…</dd>
+          </div>
+          <div>
             <dt>NHP Server</dt>
             <dd id="gateway-access_service">Checking…</dd>
           </div>
@@ -80,7 +84,7 @@
           Configure email & alerts
         </button>
       </section>
-      <section class="connection-panel panel" style="display:none">
+      <section class="connection-panel panel">
         <div>
           <p class="eyebrow">OpenNHP Service connection</p>
           <h2>Connector and credentials</h2>
@@ -245,7 +249,7 @@
     </section>
     <footer class="app-footer">
       <span>Powered by</span>
-      <a href="https://access_service.ai" target="_blank" rel="noopener noreferrer">
+      <a href="https://opennhp.org/" target="_blank" rel="noopener noreferrer">
         OpenNHP Service
       </a>
     </footer>
@@ -319,13 +323,15 @@
             <legend>Guest verification</legend>
             <label class="wide">
               <span>Verification method</span>
-              <select id="nhp-verification" aria-describedby="nhp-verification-help">
+              <select id="nhp-verification" aria-describedby="nhp-verification-help nhp-verification-status">
                 <option value="none">None — invitation opens directly</option>
                 <option value="google">Google sign-in</option>
                 <option value="email">Email code</option>
               </select>
             </label>
             <p id="nhp-verification-help">Anyone with a valid invitation can open this page.</p>
+            <p id="nhp-verification-status" role="status"></p>
+            <button id="refresh-verification-status" class="secondary" type="button">Refresh verification options</button>
             <label id="verification-email-field" class="wide hidden">
               <span>Invited guest email</span>
               <input id="verification-email" type="email" maxlength="254"
@@ -349,7 +355,7 @@
               <label>
                 <span>Duration</span>
                 <input id="custom-lifetime-value" type="number" min="1"
-                       max="72" step="1" inputmode="numeric" value="1">
+                       max="720" step="1" inputmode="numeric" value="1">
               </label>
               <label>
                 <span>Unit</span>
@@ -361,7 +367,7 @@
               </label>
             </div>
             <small id="lifetime-limit" class="lifetime-limit">
-              Maximum configured lifetime: 3 days.
+              Maximum invitation lifetime: 30 days.
             </small>
           </fieldset>
 
@@ -388,7 +394,7 @@
           <label class="one-time-toggle">
             <span>
               <strong>Alert me about guest activity</strong>
-              <small>Create a Home Assistant notification when this guest first opens the link and whenever they use an entity.</small>
+              <small>Choose email or an available notification destination, then select which guest events to report.</small>
             </span>
             <input id="activity-notifications" type="checkbox">
           </label>

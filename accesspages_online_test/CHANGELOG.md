@@ -1,3 +1,12 @@
+# 0.1.0-beta.11
+
+- Add optional Home Assistant sensor, binary-sensor and light access through the isolated local broker; demo mode remains the default.
+- Add include/exclude Configuration filters and enforce the same entity/action policy in discovery, reads and actions.
+- Allow invitation lifetimes up to the fixed 30-day Access Pages maximum while retaining 24 hours as the default.
+- Expose the existing OpenNHP Service connection reset so owners can revoke guest links, preserve page layouts and enroll again with a new one-use setup credential.
+- Add supported HA Companion notification destinations and keep Home Assistant credentials out of Guest, browser and hosted-service processes.
+- Retain pinned OpenNHP/NHP-FRP source and suppress native credential payload logging in the app build.
+
 # 0.1.0-beta.10
 
 - Restore individual guest activity and first-access/action alerts through the trusted local broker.

@@ -2,6 +2,15 @@
 
 
 def handle_get(handler, parsed, path, runtime):
+    if path == "/api/admin/verification-status":
+        if not handler._require_admin():
+            return
+        try:
+            handler._send_json(200, runtime.ACCESS_SERVICE_CLIENT.verification_status())
+        except runtime.AccessServiceError:
+            handler._send_json(503, {"error": "Hosted verification status is unavailable. Retry when the service reconnects."})
+        return
+
     if path == "/api/admin/notification-options":
         if not handler._require_admin():
             return

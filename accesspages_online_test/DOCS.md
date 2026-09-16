@@ -1,8 +1,8 @@
 # Access Pages Online test
 
 Install this experimental app only on an authorized beta Home Assistant system.
-It is managed through HA Ingress and does not request Home Assistant API access.
-It uses built-in demo devices so that NHP can be tested without HA credentials.
+It is managed through HA Ingress. Beta.11 adds optional real sensor/light access
+while retaining demo mode as the default.
 
 ## Configuration
 
@@ -10,15 +10,37 @@ Set NHP Server address on the app's Configuration page to `nhp.beta.accesspages.
 The app ships with the beta's public NHP bootstrap settings and does not fetch an
 HTTPS discovery document. It enrolls through native REG/RAK, then obtains its route,
 tunnel credentials and certificates through NHP-authorized operations.
-Select the demo door, light or temperature sensor and permitted actions when
-creating each page in Admin. Actions change only in-memory demo data; restarting
-the app resets device states but preserves pages, identities and invitations.
-Existing pages that reference real HA entities must be edited to use demo entities.
 
-Cameras, HA location/proximity and HA mobile notifications are unavailable in this
-version. Do not enable proximity verification for these tests. The Supervisor may
-still inject its standard environment token; this app does not use it or pass it
-to child processes. Supplying an HA token cannot enable live-device access.
+**Device data** defaults to `demo`, including upgrades from versions with no mode
+option. Choose `homeassistant` and restart to use real supported entities. The
+candidate requests Home Assistant API access; only its local device broker
+receives the credential when Home Assistant mode is selected. It is not sent to
+the Guest process, tunnel, hosted service or browser. Demo mode does not use it.
+
+The Configuration page follows the existing Gateway selection model:
+
+| Setting | Behavior |
+|---|---|
+| Include entity types (`include_domains`) | Comma-separated domains such as `sensor,light`. |
+| Include areas (`include_areas`) | Comma-separated HA area IDs such as `kitchen,guest_room`. |
+| Exclude entity types (`exclude_domains`) | Domains excluded even if an include rule matches. |
+| Exclude entities (`exclude_entities`) | Exact IDs such as `light.private`, excluded even on existing pages. |
+
+Leave both Include fields blank to show all supported entities. Otherwise an
+entity matching either Include field is eligible; exclusions always win.
+Restart after saving configuration. The page editor then lets you select
+individual entities and allowed controls for each guest page.
+
+The candidate enforces a fixed sensor/light pilot scope: `sensor`,
+`binary_sensor`, and `light`; lights support selected on/off actions and
+brightness where supported. Other domains, cameras and location controls are
+disabled in the broker as well as the editor. Older pages remain available to
+edit or revoke; remove unsupported controls before using them in the pilot.
+
+Demo device actions change in-memory data and reset on restart. Enrollment,
+pages, guests and queued revocations remain in app data. Real HA device state
+belongs to Home Assistant. Use **Configure email & alerts** in Open Web UI for
+local SMTP and available HA Companion notification destinations.
 
 ## Enrollment
 
@@ -61,7 +83,7 @@ remain authenticated operations behind NHP admission.
 All pages use one installation endpoint; their grants and sessions remain
 separate. Revocation in Admin removes the local grant and revokes its hosted
 AccessLink. The Guest process has no Supervisor token, Admin credential or native
-management key; its device broker enforces page policy against the demo data.
+management key; its device broker enforces page policy against the selected device backend.
 
 Demo data replaces only the HA device backend. Native REG/RAK, NHP admission,
 the outbound NHP-FRP tunnel, customer TLS, signed handoffs, GuestToken/AccessLink
@@ -88,8 +110,8 @@ closed when unavailable. The Gateway does not issue or accept verification codes
 **View activity** records use of each local guest grant. First-access and selected
 action alerts use owner-configured local delivery; an alert failure does not
 repeat a device action. A possession-only link identifies the invitation used,
-not the person holding it. HA Companion notifications remain unavailable in the
-demo-only beta.
+not the person holding it. HA Companion notifications require Home Assistant
+mode, a discovered destination and owner selection. Demo mode does not send HA notifications.
 
 ## Availability and recovery
 

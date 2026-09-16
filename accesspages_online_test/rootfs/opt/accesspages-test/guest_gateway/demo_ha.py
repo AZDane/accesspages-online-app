@@ -8,8 +8,8 @@ from ha import HomeAssistantClient, HomeAssistantError
 class DemoHomeAssistantClient(HomeAssistantClient):
     """Reuse entity discovery, but never issue a Home Assistant request."""
 
-    def __init__(self):
-        super().__init__("", "")
+    def __init__(self, **policy):
+        super().__init__("", "", **policy)
         self._lock = RLock()
         self._states = {
             "lock.nhp_demo_door": {

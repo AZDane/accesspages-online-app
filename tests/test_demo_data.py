@@ -1,4 +1,4 @@
-"""Run inside the packaged app on a disposable Linux CI runner only."""
+"""Legacy demo isolation and Linux process checks; no home credentials."""
 import hashlib
 import http.client
 import json
@@ -54,8 +54,7 @@ class DemoDataTests(unittest.TestCase):
                 operation()
 
     def test_packaged_mode_ignores_injected_ha_credentials(self):
-        self.assertTrue(runtime.DEMO_DATA)
-        with patch.dict(os.environ, {
+        with patch.object(runtime, 'DEMO_DATA', True), patch.dict(os.environ, {
             'HA_TOKEN': 'synthetic-unused', 'SUPERVISOR_TOKEN': 'synthetic-unused',
             'HASSIO_TOKEN': 'synthetic-unused', 'HA_TOKEN_FILE': '/must-not-be-read',
             'HA_BASE_URL': 'http://must-not-be-contacted.invalid',

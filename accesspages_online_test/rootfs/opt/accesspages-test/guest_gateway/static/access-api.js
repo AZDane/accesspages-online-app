@@ -13,7 +13,15 @@ function authorizationQuery(location) {
 }
 
 export function createAccessApi(location = window.location) {
-  const prefix = document.querySelector("base") ? "api/access" : "/api/access";
+  // The module and API share the app's mount point, including HA Ingress.
+  const prefix = new URL("../api/access", import.meta.url).pathname;
+
+  function actionHeaders() {
+    const headers = {"Content-Type": "application/json"};
+    const csrf = document.querySelector('meta[name="access-pages-csrf"]')?.content;
+    if (csrf) headers["X-Access-Pages-CSRF"] = csrf;
+    return headers;
+  }
 
   function path(pageId, suffix = "") {
     return `${prefix}/${encodeURIComponent(pageId)}${suffix}`;
@@ -43,7 +51,7 @@ export function createAccessApi(location = window.location) {
         ),
         {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: actionHeaders(),
           body: JSON.stringify(payload),
         },
       );
@@ -53,7 +61,7 @@ export function createAccessApi(location = window.location) {
         authorizedPath(pageId, `/verification/${action}`),
         {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: actionHeaders(),
           body: JSON.stringify(payload),
         },
       );

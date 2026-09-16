@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 import base64
 import hmac
 import json
+import feature_policy
 import math
 import re
 import mimetypes
@@ -314,6 +315,10 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _validate_entity_policy(self, payload):
+        try:
+            feature_policy.validate_page(payload)
+        except ValueError as error:
+            raise PageConfigError(str(error)) from error
         resources = payload.get("resources", [])
         if not resources:
             return
@@ -1050,6 +1055,10 @@ class Handler(BaseHTTPRequestHandler):
             )
 
     def _public_page(self, page):
+        try:
+            feature_policy.validate_page(page)
+        except ValueError as error:
+            raise HomeAssistantError(str(error), status=403) from error
         entity_ids = {
             resource["entity_id"]
             for resource in page["resources"]
@@ -1821,6 +1830,8 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "status": "ok",
                     "version": GATEWAY_VERSION,
+                    "device_data": os.getenv("GATEWAY_DEVICE_DATA", "homeassistant"),
+                    "feature_profile": feature_policy.PROFILE,
                     "page_count": len(PAGE_STORE.list_pages()),
                     "connectors": connector_status,
                     "access_service_api_configured": ACCESS_SERVICE_CLIENT.configured,
