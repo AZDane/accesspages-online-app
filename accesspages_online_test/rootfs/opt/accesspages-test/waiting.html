@@ -3,15 +3,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Access Pages</title>
-<style>body{font:16px system-ui,sans-serif;max-width:38rem;margin:10vh auto;padding:1.5rem;line-height:1.6;color:#172b3a}h1{font-size:1.7rem}p{color:#455866}</style>
+<style>body{font:16px system-ui,sans-serif;max-width:38rem;margin:10vh auto;padding:1.5rem;line-height:1.6;color:#172b3a}h1{font-size:1.7rem}p{color:#455866}.progress{display:flex;align-items:center;gap:12px}.spinner{width:24px;height:24px;flex-shrink:0;border:3px solid #d4e0e8;border-top-color:#22b8dc;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}}</style>
 <h1>Access Pages is reconnecting</h1>
-<p>Your enrollment is saved. This page will open automatically when local administration is ready.</p>
+<div class="progress"><span class="spinner" aria-hidden="true"></span><p id="status" role="status">Your enrollment is saved. Waiting for the local app to start…</p></div>
 <script>
 setInterval(async()=>{
   try {
     const response=await fetch('setup/status',{cache:'no-store'});
     if(!response.ok)return;
     const status=await response.json();
+    document.querySelector('#status').textContent=status.message;
     if(status.admin_ready||!status.enrolled)location.reload();
   } catch {}
 },2000);

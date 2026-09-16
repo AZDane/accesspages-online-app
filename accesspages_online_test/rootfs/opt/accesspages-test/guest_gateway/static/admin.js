@@ -328,16 +328,16 @@ async function responseJson(response, fallback) {
   }
 }
 
-async function waitForServiceStatus(expectedStatus, timeoutMs = 60000) {
+async function waitForConnectionReset(timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const response = await adminApi.fetch(
-        `health?transition=${Date.now()}`,
+        `setup/status?transition=${Date.now()}`,
         {cache: "no-store"},
       );
       const result = await response.json();
-      if (response.ok && result.status === expectedStatus) {
+      if (response.ok && result.enrolled === false) {
         return true;
       }
     } catch (_error) {
@@ -376,7 +376,7 @@ async function resetServiceConnection() {
       `Reconnecting…${cleanupNote}`,
       "success",
     );
-    if (await waitForServiceStatus("setup_required")) {
+    if (await waitForConnectionReset()) {
       window.location.reload();
     } else {
       setStatus(

@@ -1,3 +1,9 @@
+# 0.1.0-beta.13
+
+- Refresh into enrollment after an OpenNHP Service connection reset completes.
+- Hide the setup credential input during enrollment and show a spinner with the current preparation stage.
+- Show certificate and startup progress after reloading an enrolled app; restore the input if enrollment fails.
+
 # 0.1.0-beta.12
 
 - Complete the OpenNHP Service reset handoff: stop the isolated Gateway processes, remove local connection identities, certificates and page capabilities, and return to one-use enrollment.

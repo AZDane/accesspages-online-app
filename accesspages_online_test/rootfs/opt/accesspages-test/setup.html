@@ -1,9 +1,39 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect Access Pages</title>
-<style>body{font:17px system-ui;background:#071225;color:#e9f1ff;max-width:650px;margin:12vh auto;padding:24px}input,button{font:inherit;padding:12px;border-radius:8px;box-sizing:border-box}input{width:100%;margin:12px 0}button{background:#22b8dc;border:0}p{line-height:1.6}</style></head><body>
+<style>body{font:17px system-ui;background:#071225;color:#e9f1ff;max-width:650px;margin:12vh auto;padding:24px}input,button{font:inherit;padding:12px;border-radius:8px;box-sizing:border-box}input{width:100%;margin:12px 0}button{background:#22b8dc;border:0}p{line-height:1.6}[hidden]{display:none}.progress{display:flex;align-items:center;gap:12px}.spinner{width:24px;height:24px;flex-shrink:0;border:3px solid #39506b;border-top-color:#22b8dc;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}}</style></head><body>
 <h1>Connect Access Pages</h1><p>Request an enrollment API token from your service operator, then paste it here to connect this Home Assistant. The token is used once.</p>
 <p>NHP Server address: <strong>SERVICE_ADDRESS</strong><br>Set this address on the app’s Configuration page before enrollment.</p>
-<form><label for="token">Enrollment API token</label><input id="token" type="password" autocomplete="off" required><button>Connect</button></form><p id="status" role="status"></p>
+<form><label for="token">Enrollment API token</label><input id="token" type="password" autocomplete="off" required><button>Connect</button></form><div id="progress" class="progress" hidden><span class="spinner" aria-hidden="true"></span><p id="progress-status" role="status">Connecting…</p></div><p id="status" role="status"></p>
 <script>
-const csrf='SETUP_CSRF';document.querySelector('form').onsubmit=async event=>{event.preventDefault();const field=document.querySelector('#token');const token=field.value;field.value='';document.querySelector('#status').textContent='Connecting…';try{const response=await fetch('setup/enroll',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Pages-CSRF':csrf},body:JSON.stringify({enrollment_token:token})});if(!response.ok)throw Error();document.querySelector('#status').textContent='Enrolled. Preparing the secure guest endpoint…';}catch{document.querySelector('#status').textContent='Could not enroll. Check the token and NHP Server address, then try again.'}};
-setInterval(async()=>{try{const response=await fetch('setup/status');const state=await response.json();document.querySelector('#status').textContent=state.message;if(state.ready)location.reload();}catch{}},3000);
+const csrf='SETUP_CSRF';
+const form=document.querySelector('form');
+const progress=document.querySelector('#progress');
+const progressStatus=document.querySelector('#progress-status');
+const status=document.querySelector('#status');
+let submitting=false,enrolled=false;
+function showProgress(message){form.hidden=true;progress.hidden=false;progressStatus.textContent=message;status.textContent='';}
+form.onsubmit=async event=>{
+  event.preventDefault();if(submitting||enrolled)return;
+  submitting=true;
+  const field=document.querySelector('#token');const token=field.value;field.value='';
+  showProgress('Connecting to OpenNHP Service…');
+  try{
+    const response=await fetch('setup/enroll',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Pages-CSRF':csrf},body:JSON.stringify({enrollment_token:token})});
+    if(!response.ok)throw Error();
+    enrolled=true;showProgress('Enrolled. Preparing the customer TLS certificate…');
+  }catch{
+    form.hidden=false;progress.hidden=true;
+    status.textContent='Could not enroll. Check the token and NHP Server address, then try again.';
+  }finally{submitting=false;}
+};
+setInterval(async()=>{
+  if(submitting)return;
+  try{
+    const response=await fetch('setup/status',{cache:'no-store'});if(!response.ok)return;
+    const state=await response.json();
+    if(state.enrolled){enrolled=true;showProgress(state.message);}
+    if(state.ready)location.reload();
+  }catch{
+    if(enrolled)showProgress('Waiting for the local app to respond…');
+  }
+},3000);
 </script></body></html>
