@@ -331,7 +331,7 @@ def validate_access_grants(raw_grants: object) -> list[dict]:
                     "Access grant timestamps must be valid and timezone-aware"
                 ) from error
 
-        if raw.get("verification_method", "none") not in ("none", "google", "email"):
+        if raw.get("verification_method", "none") not in ("none", "google", "email", "google_or_email"):
             raise PageConfigError("Invalid NHP verification method")
         if raw.get("verification_method", "none") != "none":
             email = str(raw.get("verification_email", "")).strip().lower()

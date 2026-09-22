@@ -1328,7 +1328,7 @@ class Handler(BaseHTTPRequestHandler):
         if nhp.ENABLED:
             method = payload.get("verification_method", "none")
             email = str(payload.get("verification_email", "")).strip().lower()
-            if method not in ("none", "google", "email") or (method != "none" and (len(email) > 254 or email.count("@") != 1 or any(c.isspace() for c in email) or not all(email.split("@")))):
+            if method not in ("none", "google", "email", "google_or_email") or (method != "none" and (len(email) > 254 or email.count("@") != 1 or any(c.isspace() for c in email) or not all(email.split("@")))):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Choose a verification method and enter the guest email"})
                 return
             nhp_options = {"verification_method": method, "verification_email": email if method != "none" else ""}

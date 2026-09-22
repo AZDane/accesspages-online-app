@@ -102,6 +102,7 @@ function updateNhpVerification() {
  verificationEmailField.classList.toggle("hidden", method === "none");
  document.getElementById("nhp-verification-help").textContent = method === "none"
   ? "Anyone with a valid invitation can open this page."
+  : method === "google_or_email" ? "The guest can use Google sign-in or a code sent to the invited email before the page opens."
   : "The guest must verify " + (method === "google" ? "the invited Google account" : "a code sent to the invited email") + " before the page opens.";
 }
 nhpVerificationInput.addEventListener("change", () => {
@@ -1632,7 +1633,7 @@ function renderAccessGrants(page) {
     details.textContent =
       `${grant.lifetime || "Custom"} · expires ${formatExpiry(grant.expires_at)}` +
       (grant.one_time_use ? " · one-time use" : "") +
-      (grant.verification_method && grant.verification_method !== "none" ? " · NHP before access: " + grant.verification_method + (grant.verification_method === "email" ? "" : " (Google OIDC)") : "") +
+      (grant.verification_method && grant.verification_method !== "none" ? " · NHP before access: " + (grant.verification_method === "google_or_email" ? "Google or email code" : grant.verification_method) : "") +
       (grant.verification_required ? " · email verified" : "");
 
     copy.append(heading, details);
@@ -1875,7 +1876,7 @@ function openUserDialog() {
   invitationEmailInput.value = "";
   updateInvitationDelivery();
   oneTimeUseInput.checked = true;
-  nhpVerificationInput.value = "none";
+  nhpVerificationInput.value = verificationMethods.google_or_email ? "google_or_email" : "none";
   updateNhpVerification();
   access_linkLabelInput.value = "";
   activityNotificationsInput.checked = false;

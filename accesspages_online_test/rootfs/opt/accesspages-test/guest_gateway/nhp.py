@@ -76,6 +76,8 @@ class NHPClient:
                 or any(type(value) is not bool for value in methods.values())
                 or methods['none'] is not True):
             raise AccessServiceError('Hosted verification status is unavailable')
+        if result.get('multi_method') is True:
+            methods = {**methods, 'google_or_email': methods['google'] or methods['email']}
         return {'version': 1, 'methods': methods}
     def create_access_link(self, *, target_path, expires_in, one_time_use=False, verification_method="none", verification_email="", **kwargs):
         token=parse_qs(urlparse(target_path).query)['access_token'][0]
@@ -161,7 +163,7 @@ def verification_policy(grant):
         raise ValueError('Local verification is unavailable for NHP guests')
     method = grant.get('verification_method', 'none')
     email = str(grant.get('verification_email', '')).strip().lower()
-    if method not in ('none', 'google', 'email'):
+    if method not in ('none', 'google', 'email', 'google_or_email'):
         raise ValueError('Unknown verification policy')
     if method != 'none' and (len(email) > 254 or email.count('@') != 1 or any(c.isspace() for c in email) or not all(email.split('@'))):
         raise ValueError('Invited email required')
@@ -173,8 +175,8 @@ def policy_hash(grant):
 def require_verified_guest(grant, claims):
     method, email = verification_policy(grant)
     if method != 'none':
-        expected = {'google': 'google_oidc', 'email': 'email_otp'}[method]
-        if claims.get('verification_method') != expected or claims.get('verified_email') != email:
+        expected = {'google': {'google_oidc'}, 'email': {'email_otp'}, 'google_or_email': {'google_oidc', 'email_otp'}}[method]
+        if claims.get('verification_method') not in expected or claims.get('verified_email') != email:
             raise ValueError('Handoff does not satisfy the invited guest policy')
 
 def verify(token):

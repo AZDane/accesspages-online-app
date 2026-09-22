@@ -306,6 +306,7 @@ def guest_invitation_email_content(
             "none": "Keep this invitation private. The owner can revoke it at any time.",
             "email": "OpenNHP Service will send a verification code to the invited email before your page opens.",
             "google": "Sign in with the invited Google account through OpenNHP Service before your page opens.",
+            "google_or_email": "Use Google sign-in or a code sent to the invited email before your page opens.",
             None: "A separate one-time verification code will be sent to this email address when you open the guest controls.",
         }
         if verification_method not in instructions:

@@ -1,3 +1,9 @@
+# 0.1.0-beta.14
+
+- Allow an invitation to permit Google or email verification when advertised by OpenNHP Service.
+- Preserve single-method invitation policy and verify the actual signed proof against the permitted methods and invited identity.
+- Preserve the existing signed handoff, enrollment, page, session and revocation contracts.
+
 # 0.1.0-beta.13
 
 - Refresh into enrollment after an OpenNHP Service connection reset completes.
