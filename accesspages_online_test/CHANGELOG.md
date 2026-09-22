@@ -1,3 +1,9 @@
+## 0.1.0-beta.15
+
+- Revoke guest authorization immediately, with a bounded status-notification window before native transport withdrawal.
+- Clear guest controls on revocation or connection loss; bound requests to ten seconds and recover status on return.
+- Preserve pending revocation across restart and deny stale concurrent requests.
+
 # 0.1.0-beta.14
 
 - Allow an invitation to permit Google or email verification when advertised by OpenNHP Service.

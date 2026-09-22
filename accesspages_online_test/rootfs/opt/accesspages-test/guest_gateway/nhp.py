@@ -97,6 +97,13 @@ class NHPClient:
             c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY, secret TEXT NOT NULL)')
             c.execute('INSERT INTO links VALUES(?,?)',(ident,secret))
         return {'access_link_url':result['access_link'],'access_link_id':ident,'resource_id':resource,'type':'nhp','target_path_applied':True,'expires_at':datetime.fromtimestamp(result['expires'],timezone.utc).isoformat()}
+    def prepare_revocation(self, *, access_link_id, page_id, grant_id):
+        # Durable owner intent precedes local mutation. A restarted worker finishes
+        # local denial before sending authority revocation; it never regrants.
+        with revocation_db() as c:
+            c.execute('INSERT OR IGNORE INTO pending_revocations(id,page,grant_id) VALUES(?,?,?)',
+                      (access_link_id,page_id,grant_id))
+
     def delete_access_link(self, *, access_link_id, **kwargs):
         # Commit the outbox before trying the network. The local guest has
         # already been disabled; service outages must not lose revocation.
@@ -119,6 +126,9 @@ def revocation_db():
         with c:
             c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY,secret TEXT NOT NULL)')
             c.execute('CREATE TABLE IF NOT EXISTS pending_revocations(id TEXT PRIMARY KEY)')
+            columns={r['name'] for r in c.execute('PRAGMA table_info(pending_revocations)')}
+            for name in ('page','grant_id'):
+                if name not in columns:c.execute(f"ALTER TABLE pending_revocations ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             yield c
     finally:c.close()
 
@@ -126,27 +136,33 @@ def _send_revocation(ident):
     with revocation_db() as c:
         row=c.execute('SELECT secret FROM links WHERE id=?',(ident,)).fetchone()
     if row is not None:
-        result=machine({'op':'revoke_link','access':row['secret']})
-        if result.get('state')!='revoked' or result.get('network_admission_update')!='applied':
+        result=machine({'op':'revoke_link','access':row['secret'],'defer_transport':15})
+        if result.get('state')!='revoked' or result.get('network_admission_update') not in ('applied','deferred'):
             raise AccessServiceError('Local access revoked; network revocation is awaiting confirmation')
     with revocation_db() as c:
         c.execute('DELETE FROM pending_revocations WHERE id=?',(ident,))
         c.execute('DELETE FROM links WHERE id=?',(ident,))
 
-def retry_revocations():
+def retry_revocations(page_store=None):
     if not _revocation_lock.acquire(blocking=False):return
     try:
         with revocation_db() as c:
-            rows=c.execute('SELECT id FROM pending_revocations ORDER BY rowid LIMIT 8').fetchall()
+            rows=c.execute('SELECT id,page,grant_id FROM pending_revocations ORDER BY rowid LIMIT 8').fetchall()
         for row in rows:
-            try:_send_revocation(row['id'])
+            try:
+                if row['page']:
+                    if page_store is None:continue
+                    from pages import PageNotFoundError
+                    try:page_store.remove_access_grant(row['page'],row['grant_id'])
+                    except PageNotFoundError:pass
+                _send_revocation(row['id'])
             except AccessServiceError:break
     finally:_revocation_lock.release()
 
-def start_revocation_worker():
+def start_revocation_worker(page_store=None):
     def run():
         while True:
-            try:retry_revocations()
+            try:retry_revocations(page_store)
             except (OSError, sqlite3.Error):pass
             time.sleep(2)
     worker=threading.Thread(target=run,name='nhp-revocation',daemon=True)
@@ -272,4 +288,4 @@ def authorize(handler,page,runtime):
         AUTHORIZED_NHP_PAGE.set(page['id'])
         handler.active_grant=grant;handler.camera_access_scope='grant:'+grant['id'];return True
     except (ValueError,sqlite3.Error,TypeError):
-        handler._send_json(401,{'error':'Valid NHP guest session required'});return False
+        handler._send_json(401,{'error':'This access link has expired or been revoked.'});return False

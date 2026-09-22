@@ -394,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; img-src 'self' data:; "
+                "default-src 'self'; img-src 'self' data: blob:; "
                 "style-src 'self'; script-src 'self'; "
                 "connect-src 'self'; frame-ancestors 'none';",
             )
@@ -1512,7 +1512,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             try:
-                PAGE_STORE.remove_access_grant(page_id, grant_id)
+                if isinstance(ACCESS_SERVICE_CLIENT, nhp.NHPClient):
+                    with PAGE_STORE.authority_guard(write=True):
+                        ACCESS_SERVICE_CLIENT.prepare_revocation(
+                            access_link_id=grant['access_link_id'], page_id=page_id, grant_id=grant_id)
+                        PAGE_STORE.remove_access_grant(page_id, grant_id)
+                else:
+                    PAGE_STORE.remove_access_grant(page_id, grant_id)
                 try:
                     VERIFICATION_STORE.revoke(page_id, grant_id)
                     VERIFICATION_RECIPIENTS.delete(page_id, grant_id)
@@ -1920,7 +1926,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def run():
     if nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}:
-        nhp.start_revocation_worker()
+        nhp.start_revocation_worker(PAGE_STORE)
     PAGES_DIR.mkdir(parents=True, exist_ok=True)
     if (
         GATEWAY_ROLE == "guest"

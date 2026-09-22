@@ -1,4 +1,4 @@
-import {createAccessApi} from "./access-api.js";
+import {createAccessApi, AccessConnectionError} from "./access-api.js";
 
 const title = document.getElementById("title");
 const description = document.getElementById("description");
@@ -24,6 +24,11 @@ let currentPageId = "";
 let pollTimer = null;
 let commandInProgress = false;
 let accessEnded = false;
+let connectionUnavailable = false;
+let statusRequest = null;
+let connectionFailures = 0;
+let lastStatusCheckedAt = 0;
+let wasHidden = document.hidden;
 let verificationPending = false;
 let verificationCodeRequested = false;
 let verificationSubmitting = false;
@@ -65,20 +70,46 @@ function responseError(
   if (accessEndedStatuses.includes(response.status)) {
     return new AccessEndedError(message);
   }
+  if (response.status >= 500) return new AccessConnectionError(message);
   return new Error(message);
+}
+
+function clearCachedControls() {
+  resources.replaceChildren();
+  parameterDrafts.clear();
+  cameraFrames.forEach(({image, timer, imageUrl}) => {
+    clearTimeout(timer);
+    image.removeAttribute("src");
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+  });
+  cameraFrames.clear();
+  setPageButtonsDisabled(true);
+}
+
+function pauseCameraRefresh() {
+  cameraFrames.forEach((frame) => {
+    clearTimeout(frame.timer);
+    frame.timer = null;
+  });
+}
+
+function resumeCameraRefresh() {
+  cameraFrames.forEach((frame) => frame.resume?.());
+}
+
+function showConnectionUnavailable(error) {
+  if (accessEnded) return;
+  connectionUnavailable = true;
+  connectionFailures = Math.min(connectionFailures + 1, 5);
+  clearCachedControls();
+  statusBox.className = "status error";
+  statusBox.textContent = `${error.message} Controls are unavailable. Retrying status…`;
 }
 
 function endAccess() {
   accessEnded = true;
   clearTimeout(pollTimer);
-  resources.replaceChildren();
-  parameterDrafts.clear();
-  cameraFrames.forEach(({image, timer}) => {
-    clearTimeout(timer);
-    image.removeAttribute("src");
-  });
-  cameraFrames.clear();
-  setPageButtonsDisabled(true);
+  clearCachedControls();
   statusBox.className = "status error";
   statusBox.textContent =
     "This access link has expired or been revoked.";
@@ -156,30 +187,45 @@ function renderCameraFrame(page, resource, card) {
   }
 
   const interval = resource.camera_refresh_interval ?? 30;
-  const refreshImage = () => {
-    if (frame.loading || accessEnded || !cameraFrames.has(resource.id)) return;
+  const refreshImage = async () => {
+    if (frame.loading || accessEnded || document.hidden || !navigator.onLine || !cameraFrames.has(resource.id)) return;
     frame.loading = true;
     frame.feedback.textContent = "Refreshing image…";
-    frame.image.src = accessApi.cameraUrl(
-      page.id,
-      resource.id,
-      Date.now(),
-    );
+    try {
+      const response = await accessApi.cameraFrame(page.id, resource.id, Date.now());
+      if (!response.ok) throw responseError(response, {}, "Image refresh failed");
+      const blob = await response.blob();
+      if (accessEnded || document.hidden || cameraFrames.get(resource.id) !== frame) return;
+      if (frame.imageUrl) URL.revokeObjectURL(frame.imageUrl);
+      frame.imageUrl = URL.createObjectURL(blob);
+      frame.image.src = frame.imageUrl;
+    } catch (error) {
+      if (error instanceof AccessEndedError) endAccess();
+      else if (error instanceof AccessConnectionError) showConnectionUnavailable(error);
+      else frame.feedback.textContent = "Image refresh failed; try again shortly";
+    } finally {
+      frame.loading = false;
+    }
   };
   if (!frame.image.getAttribute("src")) refreshImage();
+  const schedule = () => {
+    if (frame.timer || frame.interval <= 0 || document.hidden || accessEnded ||
+        !cameraFrames.has(resource.id)) return;
+    frame.timer = setTimeout(() => {
+      frame.timer = null;
+      refreshImage();
+      schedule();
+    }, frame.interval * 1000);
+  };
+  frame.resume = () => {
+    if (!frame.image.getAttribute("src")) refreshImage();
+    schedule();
+  };
   if (frame.interval !== interval) {
     clearTimeout(frame.timer);
     frame.timer = null;
     frame.interval = interval;
-    if (interval > 0) {
-      const schedule = () => {
-        frame.timer = setTimeout(() => {
-          refreshImage();
-          if (cameraFrames.has(resource.id) && !accessEnded) schedule();
-        }, interval * 1000);
-      };
-      schedule();
-    }
+    schedule();
   }
 
   const figure = document.createElement("figure");
@@ -1173,7 +1219,13 @@ function setPageButtonsDisabled(disabled) {
     });
 }
 
-async function fetchPage({showLoading = false} = {}) {
+async function fetchPage(options = {}) {
+  if (statusRequest) return statusRequest;
+  statusRequest = fetchPageSnapshot(options);
+  try { return await statusRequest; } finally { statusRequest = null; }
+}
+
+async function fetchPageSnapshot({showLoading = false} = {}) {
   if (!currentPageId || commandInProgress || accessEnded) {
     return;
   }
@@ -1185,6 +1237,7 @@ async function fetchPage({showLoading = false} = {}) {
 
   const response = await accessApi.fetchPage(currentPageId);
   const data = await responseData(response);
+  if (accessEnded || commandInProgress || !navigator.onLine) return;
 
   if (!response.ok) {
     if (response.status === 403 && data.verification_required) {
@@ -1207,6 +1260,9 @@ async function fetchPage({showLoading = false} = {}) {
     );
   }
 
+  connectionUnavailable = false;
+  connectionFailures = 0;
+  lastStatusCheckedAt = Date.now();
   render(data);
   verificationPending = false;
   if (verificationDialog.open) verificationDialog.close();
@@ -1230,6 +1286,7 @@ async function runAction(
   payload = {},
   {onSuccess = null} = {},
 ) {
+  if (accessEnded || connectionUnavailable || commandInProgress) return;
   const isSelect = button.tagName === "SELECT";
   const originalText = isSelect ? "" : button.textContent;
   commandInProgress = true;
@@ -1260,16 +1317,16 @@ async function runAction(
       throw responseError(response, data, "Command failed");
     }
 
-    statusBox.className = "status success";
-    statusBox.textContent =
-      "Command sent. Refreshing current status…";
-    onSuccess?.();
-
     commandInProgress = false;
+    if (statusRequest) await statusRequest.catch(() => {});
+    if (accessEnded || connectionUnavailable || !navigator.onLine) return;
     await fetchPage();
+    if (!accessEnded && !connectionUnavailable) onSuccess?.();
   } catch (error) {
     if (error instanceof AccessEndedError) {
       endAccess();
+    } else if (error instanceof AccessConnectionError) {
+      showConnectionUnavailable(error);
     } else {
       statusBox.className = "status error";
       statusBox.textContent = `Error: ${error.message}`;
@@ -1280,18 +1337,18 @@ async function runAction(
       button.textContent = originalText;
     }
     if (!accessEnded) {
-      setPageButtonsDisabled(false);
+      if (!connectionUnavailable) setPageButtonsDisabled(false);
       schedulePoll();
     }
   }
 }
 
 function schedulePoll() {
-  if (accessEnded || verificationPending) {
-    return;
-  }
   clearTimeout(pollTimer);
-  pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+  pollTimer = null;
+  if (accessEnded || verificationPending || document.hidden || !navigator.onLine) return;
+  const delay = Math.min(60000, POLL_INTERVAL_MS * (2 ** connectionFailures));
+  pollTimer = setTimeout(poll, delay);
 }
 
 async function verificationRequest(action, payload = {}) {
@@ -1438,15 +1495,17 @@ verificationForm.addEventListener("submit", async (event) => {
 });
 
 async function poll() {
+  clearTimeout(pollTimer);
+  if (statusRequest || commandInProgress || verificationPending || document.hidden || !navigator.onLine || accessEnded) return;
   try {
     await fetchPage();
   } catch (error) {
     if (error instanceof AccessEndedError) {
       endAccess();
+    } else if (error instanceof AccessConnectionError) {
+      showConnectionUnavailable(error);
     } else {
-      statusBox.className = "status error";
-      statusBox.textContent =
-        `Status update failed: ${error.message}. Retrying…`;
+      showConnectionUnavailable(new AccessConnectionError("Connection lost — access unavailable."));
     }
   } finally {
     schedulePoll();
@@ -1468,6 +1527,8 @@ async function load() {
   } catch (error) {
     if (error instanceof AccessEndedError) {
       endAccess();
+    } else if (error instanceof AccessConnectionError) {
+      showConnectionUnavailable(error);
     } else {
       statusBox.className = "status error";
       statusBox.textContent = `Error: ${error.message}`;
@@ -1476,16 +1537,41 @@ async function load() {
   }
 }
 
+function resumeStatusChecks() {
+  if (accessEnded || verificationPending || document.hidden || !navigator.onLine) return;
+  if (Date.now() - lastStatusCheckedAt >= POLL_INTERVAL_MS) {
+    poll();
+  } else {
+    schedulePoll();
+  }
+}
+
 document.addEventListener("visibilitychange", () => {
+  if (document.hidden === wasHidden) return;
+  wasHidden = document.hidden;
   if (document.hidden) {
-    clearTimeout(pollTimer);
+    pauseCameraRefresh();
+    schedulePoll();
   } else if (!accessEnded) {
     reconcileResendOption();
+    resumeCameraRefresh();
     poll();
   }
 });
 
-window.addEventListener("pageshow", reconcileResendOption);
-window.addEventListener("focus", reconcileResendOption);
+for (const event of ["pageshow", "focus"]) {
+  window.addEventListener(event, () => {
+    reconcileResendOption();
+    resumeStatusChecks();
+  });
+}
+
+window.addEventListener("offline", () => {
+  clearTimeout(pollTimer);
+  if (!accessEnded) showConnectionUnavailable(new AccessConnectionError("You are offline."));
+});
+window.addEventListener("online", () => {
+  resumeStatusChecks();
+});
 
 load();

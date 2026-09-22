@@ -1,3 +1,29 @@
+export class AccessConnectionError extends Error {}
+
+async function boundedRequest(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await window.fetch(url, {
+      ...options,
+      credentials: "same-origin",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    // Keep the deadline active through the body, not just response headers.
+    const body = await response.arrayBuffer();
+    return new Response(body.byteLength ? body : null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch {
+    throw new AccessConnectionError("Connection lost — access unavailable.");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function authorizationQuery(location) {
   const source = new URLSearchParams(location.search);
   const result = new URLSearchParams();
@@ -40,11 +66,14 @@ export function createAccessApi(location = window.location) {
       const separator = target.includes("?") ? "&" : "?";
       return `${target}${separator}frame=${frame}`;
     },
+    cameraFrame(pageId, resourceId, frame) {
+      return boundedRequest(this.cameraUrl(pageId, resourceId, frame), {cache: "no-store"});
+    },
     fetchPage(pageId) {
-      return window.fetch(authorizedPath(pageId), {cache: "no-store"});
+      return boundedRequest(authorizedPath(pageId), {cache: "no-store"});
     },
     runAction(pageId, resourceId, actionId, payload) {
-      return window.fetch(
+      return boundedRequest(
         authorizedPath(
           pageId,
           `/${encodeURIComponent(resourceId)}/${encodeURIComponent(actionId)}`,
@@ -57,7 +86,7 @@ export function createAccessApi(location = window.location) {
       );
     },
     verification(pageId, action, payload) {
-      return window.fetch(
+      return boundedRequest(
         authorizedPath(pageId, `/verification/${action}`),
         {
           method: "POST",
