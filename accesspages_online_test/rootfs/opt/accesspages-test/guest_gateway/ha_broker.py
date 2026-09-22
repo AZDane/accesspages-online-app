@@ -33,10 +33,7 @@ DISCOVERY_POLICY = {
     for name in ("include_areas", "include_domains", "include_device_classes", "include_entities",
                  "exclude_areas", "exclude_domains", "exclude_device_classes", "exclude_entities")
 }
-if BACKEND == "demo":
-    from demo_ha import DemoHomeAssistantClient
-    HA_CLIENT = DemoHomeAssistantClient(**DISCOVERY_POLICY)
-elif BACKEND == "homeassistant":
+if BACKEND == "homeassistant":
     HA_CLIENT = HomeAssistantClient(os.environ["HA_BASE_URL"], os.environ["HA_TOKEN"], **DISCOVERY_POLICY)
 else:
     raise RuntimeError("Unknown device data backend")
@@ -229,7 +226,7 @@ def _service_data(resource, action, supplied):
     return result
 
 
-def execute_page_action(page_id, resource_id, action_id, parameters):
+def execute_page_action(page_id, resource_id, action_id, parameters, grant_deadline=None):
     page = _page(page_id)
     resource, action = _resource_action(page, resource_id, action_id)
     service_data = _service_data(resource, action, parameters)
@@ -238,6 +235,7 @@ def execute_page_action(page_id, resource_id, action_id, parameters):
         action["service"],
         resource["entity_id"],
         service_data,
+        **({"grant_deadline": grant_deadline} if grant_deadline is not None else {}),
     )
     return {"success": True}
 
@@ -389,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
             if feature_policy.limited():
                 allowed = {
                     "/v1/states": {"entity_ids"},
-                    "/v1/page-action": {"page_id", "resource_id", "action_id", "parameters"},
+                    "/v1/page-action": {"page_id", "resource_id", "action_id", "parameters", "grant_deadline"},
                     "/v1/discovery": {"force"},
                     "/v1/notification-targets": set(),
                     "/v1/send-notification": {"target", "title", "message"},
@@ -428,6 +426,7 @@ class Handler(BaseHTTPRequestHandler):
                         str(payload.get("resource_id", "")),
                         str(payload.get("action_id", "")),
                         payload.get("parameters", {}),
+                        payload.get("grant_deadline"),
                     ),
                 )
             elif self.path == "/v1/proximity":

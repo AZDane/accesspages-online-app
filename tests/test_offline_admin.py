@@ -68,7 +68,7 @@ class OfflineAdminTests(unittest.TestCase):
         handler.path=path;handler.command='GET';handler.headers={};handler.rfile=io.BytesIO()
         handler.client_address=('127.0.0.1',1234)
         handler.runtime=SimpleNamespace(allowed_proxies={'127.0.0.1'},csrf='synthetic-csrf',admin_token='synthetic-admin',
-            admin_ready=lambda:ready,public_status=lambda:{'ready':False},installation=SimpleNamespace(server_address='nhp.example.test:62206'))
+            ha_ready=True,ha_reason="",admin_ready=lambda:ready,public_status=lambda:{'ready':False},installation=SimpleNamespace(server_address='nhp.example.test:62206'))
         handler.sent=[];handler.send=lambda *args:handler.sent.append(args)
         return handler
 

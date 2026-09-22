@@ -152,7 +152,7 @@ class EnrollmentTests(unittest.TestCase):
                 self.assertEqual(result['access_link_url'], link)
                 self.assertEqual(result['access_link_id'], hashlib.sha256(TOKEN.encode()).hexdigest())
                 client.delete_access_link(access_link_id=result['access_link_id'])
-                self.assertEqual(calls[-1], {'op': 'revoke_link', 'access': TOKEN})
+                self.assertEqual(calls[-1], {'op': 'revoke_link', 'access': TOKEN, 'defer_transport': 15})
                 with nhp.revocation_db() as database:
                     self.assertEqual(database.execute('SELECT COUNT(*) FROM links').fetchone()[0], 0)
                     self.assertEqual(database.execute('SELECT COUNT(*) FROM pending_revocations').fetchone()[0], 0)

@@ -100,9 +100,15 @@ class NHPClient:
     def prepare_revocation(self, *, access_link_id, page_id, grant_id):
         # Durable owner intent precedes local mutation. A restarted worker finishes
         # local denial before sending authority revocation; it never regrants.
-        with revocation_db() as c:
-            c.execute('INSERT OR IGNORE INTO pending_revocations(id,page,grant_id) VALUES(?,?,?)',
-                      (access_link_id,page_id,grant_id))
+        self.prepare_revocations(page_id, [{'access_link_id': access_link_id, 'id': grant_id}])
+
+    def prepare_revocations(self, page_id, grants):
+        # Capture an entire local removal atomically using the existing outbox.
+        # Duplicate/restarted preparation cannot postpone native withdrawal.
+        rows = [(g['access_link_id'], page_id, g['id']) for g in grants if g.get('access_link_id')]
+        if rows:
+            with revocation_db() as c:
+                c.executemany('INSERT OR IGNORE INTO pending_revocations(id,page,grant_id) VALUES(?,?,?)', rows)
 
     def delete_access_link(self, *, access_link_id, **kwargs):
         # Commit the outbox before trying the network. The local guest has
@@ -122,6 +128,7 @@ _revocation_lock=threading.Lock()
 @contextmanager
 def revocation_db():
     c=db('nhp-links')
+    c.execute('PRAGMA synchronous=FULL')
     try:
         with c:
             c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY,secret TEXT NOT NULL)')
@@ -286,6 +293,8 @@ def authorize(handler,page,runtime):
         if handler.command not in ('GET','HEAD') and handler.headers.get('Origin')!=expected_origin:
             handler._send_json(403,{'error':'Origin rejected'});return False
         AUTHORIZED_NHP_PAGE.set(page['id'])
+        handler.action_deadline = datetime.fromtimestamp(
+            min(row['expires'], runtime.parse_time(grant['expires_at']).timestamp()), timezone.utc).isoformat()
         handler.active_grant=grant;handler.camera_access_scope='grant:'+grant['id'];return True
     except (ValueError,sqlite3.Error,TypeError):
         handler._send_json(401,{'error':'This access link has expired or been revoked.'});return False

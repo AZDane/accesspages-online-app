@@ -219,6 +219,7 @@ def handle_post(handler, path, payload, runtime):
             handler._validate_entity_policy(payload)
             page_id = str(payload.get("id", "")).strip()
             with runtime.page_action_lock(page_id):
+                runtime.POLICY_PUBLISHER.prepare(page_id)
                 page = runtime.PAGE_STORE.create(payload)
                 try:
                     runtime.POLICY_PUBLISHER.publish(page)
@@ -250,6 +251,7 @@ def handle_post(handler, path, payload, runtime):
                 handler._validate_entity_policy(payload)
                 with runtime.page_action_lock(page_id):
                     previous = runtime.PAGE_STORE.load(page_id)
+                    runtime.POLICY_PUBLISHER.prepare(page_id)
                     page = runtime.PAGE_STORE.update(page_id, payload)
                     try:
                         runtime.POLICY_PUBLISHER.publish(page)
@@ -330,6 +332,7 @@ def handle_put(handler, path, runtime):
         handler._validate_entity_policy(payload)
         with runtime.page_action_lock(page_id):
             previous = runtime.PAGE_STORE.load(page_id)
+            runtime.POLICY_PUBLISHER.prepare(page_id)
             page = runtime.PAGE_STORE.update(page_id, payload)
             try:
                 runtime.POLICY_PUBLISHER.publish(page)
@@ -423,8 +426,11 @@ def handle_delete(handler, path, runtime):
             with runtime.page_action_lock(page_id):
                 page = runtime.PAGE_STORE.load(page_id)
                 grants = list(page["access_grants"])
-                runtime.POLICY_PUBLISHER.delete(page_id)
+                runtime.POLICY_PUBLISHER.prepare(page_id)
                 runtime.PAGE_STORE.delete(page_id)
+                # Local denial and durable native intent are committed even
+                # when policy publication fails; the marker owns recovery.
+                runtime.POLICY_PUBLISHER.delete(page_id)
                 for grant in grants:
                     try:
                         runtime.VERIFICATION_STORE.revoke(page_id, grant["id"])

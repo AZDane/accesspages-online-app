@@ -314,6 +314,7 @@ def execute_public_action(
             page_id=page["id"],
             resource_id=resource_id,
             action_id=action_id,
+            **({"grant_deadline": handler.action_deadline} if isinstance(getattr(handler, "action_deadline", None), str) else {}),
         )
     except HomeAssistantError as error:
         handler._record_guest_action(

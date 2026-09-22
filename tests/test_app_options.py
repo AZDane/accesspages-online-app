@@ -12,8 +12,8 @@ from app_options import device_mode, discovery_environment
 
 class AppOptionsTests(unittest.TestCase):
     def test_missing_pilot_mode_defaults_to_demo_and_old_marker_stays_enforced(self):
-        self.assertEqual(device_mode({}), "demo")
-        self.assertEqual(device_mode({"device_mode": "homeassistant"}, demo_only=True), "demo")
+        self.assertEqual(device_mode({}), "review_required")
+        self.assertEqual(device_mode({"device_mode": "homeassistant"}, demo_only=True), "review_required")
         with self.assertRaises(ValueError):
             device_mode({"device_mode": "automatic"})
 
@@ -31,7 +31,8 @@ class AppOptionsTests(unittest.TestCase):
             options = root / "options.json"
             with patch.object(runtime, "ROOT", root), patch.object(runtime, "DEMO_DATA", False), patch.dict(os.environ, {"SUPERVISOR_TOKEN": "synthetic-supervisor"}, clear=True):
                 options.write_text(json.dumps({"server_address": "synthetic:62206"}))
-                self.assertEqual(runtime.broker_backend_environment(), {"HA_BROKER_BACKEND": "demo"})
+                with self.assertRaises(RuntimeError):
+                    runtime.broker_backend_environment()
                 options.write_text(json.dumps({"device_mode": "homeassistant"}))
                 broker = runtime.broker_backend_environment()
                 self.assertEqual(broker["HA_TOKEN"], "synthetic-supervisor")
@@ -53,7 +54,7 @@ class AppOptionsTests(unittest.TestCase):
             (root / "options.json").write_text(json.dumps({"include_areas": "kitchen"}))
             with patch.object(runtime, "APP", root), patch.object(runtime, "ROOT", root), patch.object(runtime, "DEMO_DATA", False):
                 env = runtime.gateway_environment()
-                self.assertEqual(env["GATEWAY_DEVICE_DATA"], "demo")
+                self.assertEqual(env["GATEWAY_DEVICE_DATA"], "review_required")
                 self.assertEqual(env["GATEWAY_FEATURE_PROFILE"], "sensors_lights")
                 self.assertEqual(env["GATEWAY_VERSION"], "synthetic-candidate")
                 self.assertEqual(env["HA_ENTITY_INCLUDE_AREAS"], "kitchen")

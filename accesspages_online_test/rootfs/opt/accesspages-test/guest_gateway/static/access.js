@@ -1019,10 +1019,11 @@ function render(page) {
       .filter((resource) => resource.domain === "camera")
       .map((resource) => resource.id),
   );
-  cameraFrames.forEach(({image, timer}, resourceId) => {
+  cameraFrames.forEach(({image, timer, imageUrl}, resourceId) => {
     if (!activeCameraIds.has(resourceId)) {
       clearTimeout(timer);
       image.removeAttribute("src");
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
       cameraFrames.delete(resourceId);
     }
   });
@@ -1530,8 +1531,7 @@ async function load() {
     } else if (error instanceof AccessConnectionError) {
       showConnectionUnavailable(error);
     } else {
-      statusBox.className = "status error";
-      statusBox.textContent = `Error: ${error.message}`;
+      showConnectionUnavailable(error);
       schedulePoll();
     }
   }

@@ -1,6 +1,7 @@
 import json
 import feature_policy
 import math
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from contextvars import ContextVar
@@ -276,6 +277,52 @@ def normalize_capabilities(domain, state, attributes, action_services=()):
     return capabilities
 
 
+# The existing guest page serializer and the isolated broker read route share
+# this allowlist. Raw HA attributes never cross the guest broker boundary.
+PUBLIC_STATE_ATTRIBUTES = (
+    "friendly_name", "device_class", "unit_of_measurement",
+    "current_position", "percentage", "percentage_step", "temperature",
+    "current_temperature", "temperature_unit", "min_temp", "max_temp",
+    "target_temp_step", "target_temp_low", "target_temp_high",
+    "hvac_modes", "hvac_action", "last_triggered", "options", "min",
+    "max", "step", "brightness", "volume_level", "media_title",
+    "media_artist", "source", "latitude", "longitude", "location_name",
+    "message", "start_time", "end_time", "forecast",
+)
+
+
+def public_state_fields(state_record):
+    """Filter raw HA state to the fields exposed by the guest UI."""
+    attributes = state_record.get("attributes") or {}
+    return {
+        "state": state_record.get("state", "unavailable"),
+        "state_attributes": {key: attributes.get(key) for key in PUBLIC_STATE_ATTRIBUTES},
+    }
+
+
+def public_resource_state(resource, state_record):
+    """Serialize only fields already exposed by the Access Pages guest UI."""
+    attributes = state_record.get("attributes") or {}
+    action_services = {item["service"] for item in resource["actions"]}
+    result = {
+        "id": resource["id"],
+        "name": resource["name"] or attributes.get("friendly_name") or resource["entity_id"],
+        "domain": resource["domain"],
+        **public_state_fields(state_record),
+        "capabilities": normalize_capabilities(
+            resource["domain"], state_record.get("state"), attributes,
+            action_services,
+        ),
+        "actions": [
+            {"id": item["id"], "name": item["name"]}
+            for item in resource["actions"]
+        ],
+    }
+    if resource["domain"] == "camera":
+        result["camera_refresh_interval"] = resource.get("camera_refresh_interval", 30)
+    return result
+
+
 class HomeAssistantError(Exception):
     def __init__(
         self,
@@ -287,6 +334,15 @@ class HomeAssistantError(Exception):
         super().__init__(message)
         self.status = status
         self.detail = detail
+
+
+def validate_dispatch_deadline(value):
+    try:
+        deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if deadline.tzinfo is None or deadline <= datetime.now(timezone.utc):
+            raise ValueError("Expired deadline")
+    except (ValueError, TypeError, AttributeError, OverflowError) as error:
+        raise HomeAssistantError("Guest authorization expired before action dispatch") from error
 
 
 class HomeAssistantClient:
@@ -400,10 +456,10 @@ class HomeAssistantClient:
                 detail=detail,
             ) from error
 
-        except URLError as error:
+        except (URLError, TimeoutError, ConnectionError) as error:
             raise HomeAssistantError(
                 "Could not reach Home Assistant",
-                detail=str(error.reason),
+                detail=str(getattr(error, "reason", type(error).__name__)),
             ) from error
 
         except json.JSONDecodeError as error:
@@ -422,11 +478,14 @@ class HomeAssistantClient:
         page_id: str = "",
         resource_id: str = "",
         action_id: str = "",
+        grant_deadline: str | None = None,
     ) -> dict | list:
         payload = {"entity_id": entity_id}
         if service_data:
             payload.update(service_data)
 
+        if grant_deadline is not None:
+            validate_dispatch_deadline(grant_deadline)
         return self._request(
             "POST",
             f"/api/services/{domain}/{service}",
@@ -469,10 +528,10 @@ class HomeAssistantClient:
                 "Home Assistant returned an error",
                 status=error.code,
             ) from error
-        except URLError as error:
+        except (URLError, TimeoutError, ConnectionError) as error:
             raise HomeAssistantError(
                 "Could not reach Home Assistant",
-                detail=str(error.reason),
+                detail=str(getattr(error, "reason", type(error).__name__)),
             ) from error
 
     def get_states(
@@ -755,10 +814,10 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
                 status=error.code,
                 detail=detail,
             ) from error
-        except URLError as error:
+        except (URLError, TimeoutError, ConnectionError) as error:
             raise HomeAssistantError(
                 "Could not reach Home Assistant broker",
-                detail=str(error.reason),
+                detail=str(getattr(error, "reason", type(error).__name__)),
             ) from error
         except json.JSONDecodeError as error:
             raise HomeAssistantError(
@@ -801,10 +860,10 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
                 "Home Assistant broker rejected the request",
                 status=error.code,
             ) from error
-        except URLError as error:
+        except (URLError, TimeoutError, ConnectionError) as error:
             raise HomeAssistantError(
                 "Could not reach Home Assistant broker",
-                detail=str(error.reason),
+                detail=str(getattr(error, "reason", type(error).__name__)),
             ) from error
 
     def get_states(self, entity_ids=None):
@@ -833,6 +892,7 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
         page_id="",
         resource_id="",
         action_id="",
+        grant_deadline=None,
     ):
         if not page_id or not resource_id or not action_id:
             raise HomeAssistantError(
@@ -846,6 +906,7 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
                 "resource_id": resource_id,
                 "action_id": action_id,
                 "parameters": service_data or {},
+                **({"grant_deadline": grant_deadline} if grant_deadline is not None else {}),
             },
         )
 

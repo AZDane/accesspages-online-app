@@ -79,6 +79,7 @@ from ha import (
     HomeAssistantError,
     nhp_page_capability,
     normalize_capabilities,
+    public_resource_state,
 )
 from access_service import AccessServiceError
 from pages import (
@@ -163,6 +164,7 @@ PAGE_STORE = PageStore(
 POLICY_PUBLISHER = PolicyPublisher(
     POLICY_PUBLISH_URL,
     POLICY_PUBLISH_TOKEN,
+    pending_directory=PAGES_DIR,
 )
 ACTIVITY_STORE = (
     BrokerGuestActivityStore(
@@ -269,6 +271,8 @@ class GatewayHTTPServer(ThreadingHTTPServer):
 
 
 ACCESS_SERVICE_CLIENT = nhp.NHPClient()
+if nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}:
+    PAGE_STORE.before_revoke = ACCESS_SERVICE_CLIENT.prepare_revocations
 
 
 def utc_now() -> datetime:
@@ -753,9 +757,13 @@ class Handler(BaseHTTPRequestHandler):
     def _require_page_access(self, page, *, record_invalid=False):
         # Public/OpenNHP Service authorization is deliberately separate from admin
         # authorization. An admin token is never accepted on guest routes.
+        if POLICY_PUBLISHER.pending(page["id"]):
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Page policy is awaiting reconciliation"})
+            return False
         query = self._query()
         preview_token = query.get("preview_token", [""])[0]
         if self._valid_preview_token(page["id"], preview_token):
+            self.action_deadline = isoformat(datetime.fromtimestamp(int(preview_token.split(".", 1)[0]), timezone.utc))
             self.camera_access_scope = "preview:" + sha256(
                 preview_token.encode("utf-8")
             ).hexdigest()[:24]
@@ -1074,88 +1082,10 @@ class Handler(BaseHTTPRequestHandler):
                 if state.get("entity_id") in entity_ids
             }
 
-        resources = []
-
-        for resource in page["resources"]:
-            state_record = states_by_entity.get(
-                resource["entity_id"],
-                {},
-            )
-            attributes = state_record.get("attributes") or {}
-            action_services = {
-                action["service"]
-                for action in resource["actions"]
-            }
-
-            public_resource = {
-                "id": resource["id"],
-                "name": (
-                        resource["name"]
-                        or attributes.get("friendly_name")
-                        or resource["entity_id"]
-                ),
-                "domain": resource["domain"],
-                "state": state_record.get("state", "unavailable"),
-                "capabilities": normalize_capabilities(
-                        resource["domain"],
-                        state_record.get("state"),
-                        attributes,
-                        action_services,
-                ),
-                "state_attributes": {
-                        "friendly_name": attributes.get("friendly_name"),
-                        "device_class": attributes.get("device_class"),
-                        "unit_of_measurement": attributes.get(
-                            "unit_of_measurement"
-                        ),
-                        "current_position": attributes.get(
-                            "current_position"
-                        ),
-                        "percentage": attributes.get("percentage"),
-                        "percentage_step": attributes.get("percentage_step"),
-                        "temperature": attributes.get("temperature"),
-                        "current_temperature": attributes.get(
-                            "current_temperature"
-                        ),
-                        "temperature_unit": attributes.get("temperature_unit"),
-                        "min_temp": attributes.get("min_temp"),
-                        "max_temp": attributes.get("max_temp"),
-                        "target_temp_step": attributes.get("target_temp_step"),
-                        "target_temp_low": attributes.get("target_temp_low"),
-                        "target_temp_high": attributes.get("target_temp_high"),
-                        "hvac_modes": attributes.get("hvac_modes"),
-                        "hvac_action": attributes.get("hvac_action"),
-                        "last_triggered": attributes.get("last_triggered"),
-                        "options": attributes.get("options"),
-                        "min": attributes.get("min"),
-                        "max": attributes.get("max"),
-                        "step": attributes.get("step"),
-                        "brightness": attributes.get("brightness"),
-                        "volume_level": attributes.get("volume_level"),
-                        "media_title": attributes.get("media_title"),
-                        "media_artist": attributes.get("media_artist"),
-                        "source": attributes.get("source"),
-                        "latitude": attributes.get("latitude"),
-                        "longitude": attributes.get("longitude"),
-                        "location_name": attributes.get("location_name"),
-                        "message": attributes.get("message"),
-                        "start_time": attributes.get("start_time"),
-                        "end_time": attributes.get("end_time"),
-                        "forecast": attributes.get("forecast"),
-                },
-                "actions": [
-                        {
-                            "id": action["id"],
-                            "name": action["name"],
-                        }
-                        for action in resource["actions"]
-                ],
-            }
-            if resource["domain"] == "camera":
-                public_resource["camera_refresh_interval"] = resource.get(
-                    "camera_refresh_interval", 30
-                )
-            resources.append(public_resource)
+        resources = [
+            public_resource_state(resource, states_by_entity.get(resource["entity_id"], {}))
+            for resource in page["resources"]
+        ]
 
         return {
             "id": page["id"],
@@ -1878,6 +1808,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
     def do_POST(self):
+        self.action_deadline = None
         if nhp.ENABLED and urlparse(self.path).path == "/handoff":
             if self._valid_request_envelope(): nhp.handoff(self, RUNTIME)
             return
@@ -1924,7 +1855,27 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
+def reconcile_policies():
+    for page_id in POLICY_PUBLISHER.pending_pages():
+        try:
+            with page_action_lock(page_id):
+                try:
+                    page = PAGE_STORE.load(page_id)
+                except PageNotFoundError:
+                    POLICY_PUBLISHER.delete(page_id)
+                else:
+                    POLICY_PUBLISHER.publish(page)
+        except (OSError, PolicyPublishError, PageConfigError):
+            audit("policy_reconciliation_pending", page_id=page_id)
+
+
 def run():
+    if GATEWAY_ROLE in {"admin", "combined"} and POLICY_PUBLISHER.configured:
+        def retry_policies():
+            while True:
+                reconcile_policies()
+                time.sleep(5)
+        Thread(target=retry_policies, daemon=True).start()
     if nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}:
         nhp.start_revocation_worker(PAGE_STORE)
     PAGES_DIR.mkdir(parents=True, exist_ok=True)

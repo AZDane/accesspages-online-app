@@ -16,13 +16,14 @@ def read_options(root):
     return value
 
 
-def device_mode(options, *, demo_only=False, default="demo"):
+def device_mode(options, *, demo_only=False, default="review_required"):
+    # Legacy values are a migration state, never an alternate HA backend.
     if demo_only:
-        return "demo"
+        return "review_required"
     value = options.get("device_mode", default)
-    if value not in {"demo", "homeassistant"}:
-        raise ValueError("Device data must be demo or homeassistant")
-    return value
+    if value not in {"demo", "review_required", "homeassistant"}:
+        raise ValueError("Select Home Assistant explicitly after reviewing the app configuration")
+    return "review_required" if value == "demo" else value
 
 
 def discovery_environment(options):

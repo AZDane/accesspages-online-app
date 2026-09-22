@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from installation import Installation, atomic
 from app_options import read_options, device_mode, discovery_environment
+from ha_activation import activation_status
 
 ROOT=Path(os.getenv('ACCESSPAGES_DATA_DIR','/data'))
 APP=Path(__file__).resolve().parent
@@ -29,10 +30,7 @@ USERS={'admin':1001,'guest':1002,'broker':1003,'tls':1004,'connector':1005}
 DEMO_DATA=(APP/'demo-data').is_file()
 
 def configured_device_mode():
-    # Existing immutable demo builds remain unable to use HA credentials.
-    # Supervisor upgrades of the pilot build default to demo until selected.
-    default='demo' if (ROOT/'options.json').exists() or (APP/'pilot-features').exists() else 'homeassistant'
-    return device_mode(read_options(ROOT),demo_only=DEMO_DATA,default=default)
+    return device_mode(read_options(ROOT), demo_only=DEMO_DATA)
 
 
 def gateway_environment():
@@ -57,8 +55,8 @@ def configured_server_address():
 
 
 def broker_backend_environment(mode=None):
-    if (mode or configured_device_mode())=='demo':
-        return {'HA_BROKER_BACKEND':'demo'}
+    if (mode or configured_device_mode()) != 'homeassistant':
+        raise RuntimeError('Home Assistant activation requires owner review')
     ha_token=os.getenv('HA_TOKEN') or os.getenv('SUPERVISOR_TOKEN')
     if os.getenv('HA_TOKEN_FILE'):
         ha_token=Path(os.environ['HA_TOKEN_FILE']).read_text().strip()
@@ -85,6 +83,7 @@ class Runtime:
                     continue
                 os.chown(child,uid,GROUP)
                 child.chmod(0o700 if child.is_dir() or child==ROOT/'connector/frpc' else 0o600)
+        self.ha_ready, self.ha_reason = activation_status(ROOT, self.device_mode)
         (ROOT/'public').mkdir(exist_ok=True,mode=0o755)
         (ROOT/'public').chmod(0o755)
         self.installation=Installation(ROOT/'admin/installation',server_address=configured_server_address())
@@ -173,7 +172,8 @@ class Runtime:
         message='Starting local app services.' if not ready and self.message.startswith('Ready') else self.message
         return {'message':message,'enrolled':(self.installation.root/'binding.json').exists(),
                 'ready':bool(ready),'admin_ready':self.admin_ready(),
-                'device_data':self.device_mode}
+                'device_data':self.device_mode,
+                'migration_required':not self.ha_ready, 'migration_reason':self.ha_reason}
 
     def admin_ready(self):
         # Owner controls must remain reachable through HA Ingress when the
@@ -198,6 +198,9 @@ class Runtime:
         finally:connection.close()
 
     def prepare(self):
+        if not self.ha_ready:
+            self.message=self.ha_reason
+            return False
         self.phase='installation status'
         now=time.monotonic()
         if now-self.last_authority>3600:
@@ -257,7 +260,7 @@ class Runtime:
                 'NHP_VERIFY_KEY_FILE':str(ROOT/'public/handoff-public-key'),
                 'HOST':'127.0.0.1',
                 'PAGE_FILE_MODE':'640','HA_BROKER_URL':'http://127.0.0.1:8083'}
-        self.phase='demo data' if self.device_mode=='demo' else 'Home Assistant connection'
+        self.phase='Home Assistant connection'
         self.start('broker',['python3',str(GATEWAY/'ha_broker.py')],{
             **product,'HA_BROKER_HOST':'127.0.0.1','HA_BROKER_PORT':'8083',
             'HA_BROKER_TOKEN':self.broker_unused,'HA_BROKER_ADMIN_TOKEN':self.broker_admin,
@@ -362,12 +365,18 @@ class Ingress(BaseHTTPRequestHandler):
         if self.client_address[0] not in runtime.allowed_proxies:self.send(403,{'error':'Use Home Assistant Ingress'});return
         if self.command not in ('GET','HEAD') and self.headers.get('X-Access-Pages-CSRF')!=runtime.csrf:self.send(403,{'error':'Reload the local app'});return
         try:
-            mode=getattr(runtime,'device_mode',None) or configured_device_mode()
             length=int(self.headers.get('Content-Length','0'))
             if not 0<=length<=512000:raise ValueError()
             body=self.rfile.read(length) if length else b''
             path=urlparse(self.path).path
             if path=='/setup/status':self.send(200,runtime.public_status());return
+            if not runtime.ha_ready:
+                if self.command == 'GET' and not path.startswith('/api/'):
+                    markup=(APP/'migration.html').read_text().replace('MIGRATION_REASON',html.escape(runtime.ha_reason))
+                    self.send(200,markup.encode(),'text/html; charset=utf-8')
+                else:
+                    self.send(409,{'error':'Home Assistant activation requires owner review'})
+                return
             if path=='/setup/enroll' and self.command=='POST':
                 value=json.loads(body)
                 if not isinstance(value,dict) or set(value)!={'enrollment_token'}:raise ValueError()
@@ -378,8 +387,6 @@ class Ingress(BaseHTTPRequestHandler):
                 if runtime.public_status().get('enrolled'):
                     self.send(200,(APP/'waiting.html').read_bytes(),'text/html; charset=utf-8');return
                 markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.server_address))
-                if mode=='demo':
-                    markup=markup.replace('<form>', '<p><strong>NHP test: demo data only.</strong> This app does not access Home Assistant devices. Demo actions reset when the app restarts.</p><form>')
                 self.send(200,markup.encode(),'text/html; charset=utf-8');return
             target='/admin' if path=='/' else self.path
             connection=http.client.HTTPConnection('127.0.0.1',8081,timeout=40)
@@ -390,8 +397,6 @@ class Ingress(BaseHTTPRequestHandler):
                 kind=response.getheader('Content-Type','application/json')
                 if 'text/html' in kind:
                     payload=payload.replace(b'</head>',f'<meta name="access-pages-csrf" content="{runtime.csrf}"></head>'.encode())
-                    if mode=='demo':
-                        payload=payload.replace(b'<body>', b'<body><p role="note" style="padding:12px;text-align:center">NHP test: demo data only. No Home Assistant device access. Demo actions reset when the app restarts.</p>')
                 self.send(response.status,payload,kind)
             finally:connection.close()
         except Exception:self.send(400,{'error':'Operation failed. Check the enrollment token and service connection.'})

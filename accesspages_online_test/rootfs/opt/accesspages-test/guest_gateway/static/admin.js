@@ -349,6 +349,40 @@ async function waitForConnectionReset(timeoutMs = 60000) {
   return false;
 }
 
+function openSetupPage() {
+  // The same authenticated Ingress view loads the authoritative setup document.
+  const setupUrl = new URL("admin", document.baseURI);
+  setupUrl.searchParams.set("reset", String(Date.now()));
+  window.location.replace(setupUrl.toString());
+}
+
+function renderInvitationDelivery(result, sharingContent, delivery) {
+  if (!delivery?.requested) {
+    result.append(sharingContent);
+    return;
+  }
+  const status = document.createElement("div");
+  status.className = `invitation-delivery-status${delivery.sent ? "" : " warning"}`;
+  const heading = document.createElement("strong");
+  heading.textContent = delivery.sent ? "Invitation email submitted" : "Email delivery could not be confirmed";
+  const detail = document.createElement("p");
+  detail.textContent = delivery.sent
+    ? "Your SMTP provider accepted the invitation. Backup sharing options remain available below."
+    : "The invitation is saved. Use a sharing option below, then check your email configuration.";
+  status.append(heading, detail);
+  result.append(status);
+  if (delivery.sent) {
+    const fallback = document.createElement("details");
+    fallback.className = "invitation-sharing-fallback";
+    const summary = document.createElement("summary");
+    summary.textContent = "Show backup sharing options";
+    fallback.append(summary, sharingContent);
+    result.append(fallback);
+  } else {
+    result.append(sharingContent);
+  }
+}
+
 async function resetServiceConnection() {
   confirmResetButton.disabled = true;
   resetStatus.className = "status";
@@ -356,11 +390,21 @@ async function resetServiceConnection() {
     "Revoking guests and resetting the OpenNHP Service connection…";
   setStatus("Revoking guests and resetting the OpenNHP Service connection…");
   try {
-    const response = await adminApi.fetch("api/admin/connection/reset", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({confirmation: resetConfirmationInput.value}),
-    });
+    let response;
+    try {
+      response = await adminApi.fetch("api/admin/connection/reset", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({confirmation: resetConfirmationInput.value}),
+      });
+    } catch (error) {
+      // A dropped response is not proof of reset: confirm the native setup state.
+      if (await waitForConnectionReset()) {
+        openSetupPage();
+        return;
+      }
+      throw error;
+    }
     const data = await responseJson(
       response,
       "Could not reset the OpenNHP Service connection",
@@ -378,7 +422,7 @@ async function resetServiceConnection() {
       "success",
     );
     if (await waitForConnectionReset()) {
-      window.location.reload();
+      openSetupPage();
     } else {
       setStatus(
         "The reset completed, but onboarding is taking longer than expected. " +
@@ -433,9 +477,8 @@ async function loadGatewayStatus() {
     }
 
     gatewayVersion.textContent = data.version || "Unknown";
-    document.getElementById("gateway-device-data").textContent = data.device_data === "demo"
-      ? "Demo devices — change in app Configuration to use Home Assistant"
-      : data.device_data === "homeassistant" ? "Home Assistant" : "Unknown";
+    document.getElementById("gateway-device-data").textContent = data.device_data === "homeassistant"
+      ? "Home Assistant" : "Home Assistant setup required";
     gatewayHealth.textContent =
       data.status === "ok" ? "Online" : "Unavailable";
     gatewayService.textContent = data.access_service_api_configured
@@ -2020,15 +2063,7 @@ async function generateAccessLink() {
     sharingContent.className = "access_link-sharing-content";
     sharingContent.append(activationRow, sharePanel);
 
-    if (data.email_delivery?.requested) {
-      const notice = document.createElement("p");
-      notice.className = data.email_delivery.sent ? "status success" : "status error";
-      notice.textContent = data.email_delivery.sent
-        ? "Invitation submitted to your SMTP provider for delivery."
-        : "Email delivery could not be confirmed. The invitation is saved; use the sharing options below.";
-      access_linkResult.append(notice);
-    }
-    access_linkResult.append(sharingContent);
+    renderInvitationDelivery(access_linkResult, sharingContent, data.email_delivery);
     access_linkResult.classList.remove("hidden");
     access_linkResult.classList.remove("result-reveal");
     void access_linkResult.offsetWidth;
@@ -2042,10 +2077,14 @@ async function generateAccessLink() {
     await loadPages();
     await loadGuestActivitySummaries(currentPage.id);
     renderAccessGrants(currentPage);
-    setStatus(
-      `Guest link created for ${userName}. Access expires ${formatExpiry(data.grant.expires_at)}.`,
-      "success",
-    );
+    if (data.email_delivery?.requested && !data.email_delivery.sent) {
+      setStatus(`Guest link created for ${userName}, but email delivery could not be confirmed. Use the sharing options.`, "error");
+    } else {
+      setStatus(
+        `Guest link created for ${userName}. Access expires ${formatExpiry(data.grant.expires_at)}.`,
+        "success",
+      );
+    }
   } catch (error) {
     setStatus(`Error: ${error.message}`, "error");
   } finally {

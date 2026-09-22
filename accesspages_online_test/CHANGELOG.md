@@ -1,3 +1,10 @@
+## 0.1.0-beta.16 — local Gateway alignment candidate
+
+- Align guest lifecycle, public serializers, dispatch deadlines and durable page/policy cleanup with the HA application.
+- Remove built-in fake devices. Normal Home Assistant integration requires explicit owner configuration and a reviewed transition with no old grants/fake resources.
+- Improve invitation delivery/fallback and connection reset feedback. Preserve NHP verification/admission, V5 immediate revoke and bounded native withdrawal.
+- LOCAL CANDIDATE ONLY: unpublished and not installed. Existing beta remains beta.15.
+
 ## 0.1.0-beta.15
 
 - Revoke guest authorization immediately, with a bounded status-notification window before native transport withdrawal.

@@ -1447,3 +1447,34 @@ input:disabled {
 .nhp-verification-fieldset { display: grid; gap: 14px; }
 .nhp-verification-fieldset p { margin: 0; line-height: 1.5; }
 .nhp-verification-fieldset small { line-height: 1.5; color: var(--muted); }
+
+/* Common invitation delivery presentation adapted from HA-Nova. */
+.invitation-delivery-status {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid rgba(85,231,157,.45);
+  border-radius: 11px;
+  background: rgba(85,231,157,.1);
+}
+
+.invitation-delivery-status.warning {
+  border-color: rgba(255,190,92,.55);
+  background: rgba(255,190,92,.1);
+}
+
+.invitation-delivery-status p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.invitation-sharing-fallback > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.invitation-sharing-fallback[open] > summary {
+  margin-bottom: 14px;
+}
+

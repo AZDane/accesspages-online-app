@@ -26,9 +26,10 @@ class PageNotFoundError(FileNotFoundError):
 
 
 class PageStore:
-    def __init__(self, directory: Path, file_mode: int = 0o600):
+    def __init__(self, directory: Path, file_mode: int = 0o600, before_revoke=None):
         self.directory = directory
         self.file_mode = file_mode
+        self.before_revoke = before_revoke
         self._lock = RLock()
         self._guard_state = local()
 
@@ -236,10 +237,34 @@ class PageStore:
         if not path.exists():
             raise PageNotFoundError(page_id)
 
+        self._prepare_removed_grants(page_id, [])
         path.unlink()
+        self._sync_directory()
+
+    def _prepare_removed_grants(self, page_id, remaining):
+        if self.before_revoke is None:
+            return
+        path = self._path(page_id)
+        if not path.exists():
+            return
+        previous = self._load_unlocked(page_id)
+        kept = {grant["id"] for grant in remaining}
+        removed = [grant for grant in previous["access_grants"] if grant["id"] not in kept]
+        if removed:
+            self.before_revoke(page_id, removed)
+
+    def _sync_directory(self):
+        descriptor = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def _write(self, path: Path, page: dict) -> None:
         self.ensure_directory()
+        # Durable native intent precedes losing identifiers in single/bulk,
+        # expiry, reset and page deletion. The callback never makes network IO.
+        self._prepare_removed_grants(page["id"], page["access_grants"])
 
         with NamedTemporaryFile(
             "w",
@@ -250,9 +275,13 @@ class PageStore:
             json.dump(page, temporary, indent=2)
             temporary.write("\n")
             temporary_path = Path(temporary.name)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            os.fchmod(temporary.fileno(), self.file_mode)
 
         temporary_path.replace(path)
         path.chmod(self.file_mode)
+        self._sync_directory()
 
 
 def validate_page_id(page_id: str) -> str:
