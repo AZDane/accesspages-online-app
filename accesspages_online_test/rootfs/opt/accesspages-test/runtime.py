@@ -217,7 +217,7 @@ class Runtime:
         if now-self.last_certificate>3600 or not (ROOT/'tls/guest.crt').exists():
             self.phase='customer certificate issuance'
             if not self.installation.ensure_certificate():
-                self.message='Enrolled. Waiting for the customer TLS certificate.'
+                self.message='Enrolled. Preparing your secure connection. This one-time certificate setup can take a couple of minutes. This page will continue automatically.'
                 return False
             changed=not (ROOT/'tls/guest.crt').exists() or (ROOT/'tls/guest.crt').read_bytes()!=(self.installation.root/'guest.crt').read_bytes()
             for name in ('guest.crt','guest.key'):
@@ -304,7 +304,7 @@ http {{
 }}
 '''
         atomic(ROOT/'tls/nginx.conf',config);os.chown(ROOT/'tls/nginx.conf',USERS['tls'],GROUP)
-        self.start('tls',['nginx','-c',str(ROOT/'tls/nginx.conf'),'-g','daemon off;'],{})
+        self.start('tls',['nginx','-e','stderr','-c',str(ROOT/'tls/nginx.conf'),'-g','daemon off;'],{})
         connector_config=self.installation.connector_config(self.connector_health_password).replace(str(self.installation.root/'frp-ca.crt'),str(ROOT/'connector/frp-ca.crt'))
         configuration=ROOT/'connector/frpc.toml'
         if not configuration.exists() or configuration.read_text()!=connector_config:self.stop('connector')

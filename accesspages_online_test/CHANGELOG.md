@@ -1,3 +1,9 @@
+## 0.1.0-beta.18
+
+- Send Nginx startup diagnostics directly to stderr without changing the existing logging policy or process isolation.
+- Explain that first-time certificate setup can take a couple of minutes and continues automatically.
+- Preserve enrollment, identities, certificates, pages, invitations and connection state during the normal update.
+
 ## 0.1.0-beta.17
 
 - Initialize the invited email field when Add Guest opens with an email-requiring verification method.
