@@ -1478,3 +1478,7 @@ input:disabled {
   margin-bottom: 14px;
 }
 
+
+/* Keep validation visible and announced in the modal that owns the action. */
+#user-dialog-status:not([hidden]) { position: sticky; top: 0; z-index: 2; margin: 0 0 16px; padding: 12px 14px; border: 1px solid currentColor; border-radius: 10px; background: #0b172a; overflow-wrap: anywhere; }
+#user-dialog-status[hidden] { display: none; }

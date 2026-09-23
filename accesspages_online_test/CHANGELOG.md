@@ -1,3 +1,9 @@
+## 0.1.0-beta.17
+
+- Initialize the invited email field when Add Guest opens with an email-requiring verification method.
+- Keep guest creation and required-email feedback inside the dialog.
+- Preserve accepted GA1 Home Assistant, NHP, verification, revocation and transport behavior.
+
 ## 0.1.0-beta.16 — local Gateway alignment candidate
 
 - Align guest lifecycle, public serializers, dispatch deadlines and durable page/policy cleanup with the HA application.

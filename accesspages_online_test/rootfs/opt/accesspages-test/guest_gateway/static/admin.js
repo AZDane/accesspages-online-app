@@ -55,6 +55,12 @@ const usersTitle = document.getElementById("users-title");
 const addUserButton = document.getElementById("add-user");
 const userDialog = document.getElementById("user-dialog");
 const closeUserDialogButton = document.getElementById("close-user-dialog");
+const userDialogStatus = document.getElementById("user-dialog-status");
+function setUserDialogStatus(message, kind = "") {
+  userDialogStatus.textContent = message;
+  userDialogStatus.className = `status ${kind}`.trim();
+  userDialogStatus.hidden = !message;
+}
 const access_linkLabelInput = document.getElementById("access_link-label");
 const nhpVerificationInput = document.getElementById("nhp-verification");
 const verificationStatus = document.getElementById("nhp-verification-status");
@@ -100,6 +106,8 @@ applyVerificationMethods();
 function updateNhpVerification() {
  const method = nhpVerificationInput.value;
  verificationEmailField.classList.toggle("hidden", method === "none");
+ verificationEmailInput.required = method !== "none";
+ verificationEmailInput.disabled = method === "none";
  document.getElementById("nhp-verification-help").textContent = method === "none"
   ? "Anyone with a valid invitation can open this page."
   : method === "google_or_email" ? "The guest can use Google sign-in or a code sent to the invited email before the page opens."
@@ -1920,12 +1928,12 @@ function openUserDialog() {
   updateInvitationDelivery();
   oneTimeUseInput.checked = true;
   nhpVerificationInput.value = verificationMethods.google_or_email ? "google_or_email" : "none";
-  updateNhpVerification();
   access_linkLabelInput.value = "";
   activityNotificationsInput.checked = false;
   activityNotificationOptions.classList.add("hidden");
   verificationEmailInput.value = "";
-  verificationEmailField.classList.add("hidden");
+  updateNhpVerification();
+  setUserDialogStatus("");
   access_linkResult.classList.add("hidden");
   userDialog.showModal();
   void loadVerificationStatus();
@@ -1935,12 +1943,12 @@ function openUserDialog() {
 async function generateAccessLink() {
   if (generateAccessLinkButton.disabled) return;
   if (!currentPage || !editingExisting) {
-    setStatus("Save the page before generating a AccessLink.", "error");
+    setUserDialogStatus("Save the page before generating a AccessLink.", "error");
     return;
   }
 
   if (!accessServiceApiConfigured) {
-    setStatus(
+    setUserDialogStatus(
       "The Guest Gateway is not connected to the OpenNHP Service.",
       "error",
     );
@@ -1949,19 +1957,19 @@ async function generateAccessLink() {
 
   const userName = access_linkLabelInput.value.trim();
   if (!userName) {
-    setStatus("Enter a guest name before creating the link.", "error");
+    setUserDialogStatus("Enter a guest name before creating the link.", "error");
     access_linkLabelInput.focus();
     return;
   }
 
   if (nhpVerificationInput.value !== "none" && (!verificationEmailInput.value.trim() || !verificationEmailInput.checkValidity())) {
-    setStatus("Enter the invited guest email for verification.", "error");
+    setUserDialogStatus("Enter the invited guest email for verification.", "error");
     verificationEmailInput.focus();
     return;
   }
 
   if (verificationMethods[nhpVerificationInput.value] !== true) {
-    setStatus("The selected verification method is unavailable. Refresh verification options before creating this invitation.", "error");
+    setUserDialogStatus("The selected verification method is unavailable. Refresh verification options before creating this invitation.", "error");
     return;
   }
   const verificationEmail = verificationEmailInput.value.trim();
@@ -1970,31 +1978,31 @@ async function generateAccessLink() {
     events: [...document.querySelectorAll('input[name="notification-event"]:checked')].map((input) => input.value),
   } : null;
   if (activityNotificationsInput.checked && !notificationSettings.targets.length) {
-    setStatus("Choose a configured email or mobile notification target.", "error");
+    setUserDialogStatus("Choose a configured email or mobile notification target.", "error");
     activityNotificationOptions.classList.remove("hidden");
     return;
   }
   if (activityNotificationsInput.checked && !notificationSettings.events.length) {
-    setStatus("Choose at least one guest activity to be notified about.", "error");
+    setUserDialogStatus("Choose at least one guest activity to be notified about.", "error");
     return;
   }
 
   const invitationEmail = invitationEmailInput.value.trim().toLowerCase();
   if (sendInvitationEmailInput.checked) {
     if (!emailConfigured || !invitationEmail || !invitationEmailInput.checkValidity()) {
-      setStatus("Configure local SMTP and enter the invitation recipient.", "error");
+      setUserDialogStatus("Configure local SMTP and enter the invitation recipient.", "error");
       invitationEmailInput.focus();
       return;
     }
     if (nhpVerificationInput.value !== "none" && invitationEmail !== verificationEmail.toLowerCase()) {
-      setStatus("Send the invitation to the email selected for guest verification.", "error");
+      setUserDialogStatus("Send the invitation to the email selected for guest verification.", "error");
       invitationEmailInput.focus();
       return;
     }
   }
 
   generateAccessLinkButton.disabled = true;
-  setStatus(`Creating access for ${userName}…`);
+  setUserDialogStatus(`Creating access for ${userName}…`);
   try {
     const response = await adminApi.fetch(
       `api/admin/pages/${encodeURIComponent(currentPage.id)}/access-links`,
@@ -2043,7 +2051,7 @@ async function generateAccessLink() {
     activationButton.textContent = "Copy guest link";
     activationButton.addEventListener("click", () => {
       copyText(data.grant.access_link_url, activationButton).catch((error) => {
-        setStatus(`Copy failed: ${error.message}`, "error");
+        setUserDialogStatus(`Copy failed: ${error.message}`, "error");
       });
     });
 
@@ -2078,15 +2086,15 @@ async function generateAccessLink() {
     await loadGuestActivitySummaries(currentPage.id);
     renderAccessGrants(currentPage);
     if (data.email_delivery?.requested && !data.email_delivery.sent) {
-      setStatus(`Guest link created for ${userName}, but email delivery could not be confirmed. Use the sharing options.`, "error");
+      setUserDialogStatus(`Guest link created for ${userName}, but email delivery could not be confirmed. Use the sharing options.`, "error");
     } else {
-      setStatus(
+      setUserDialogStatus(
         `Guest link created for ${userName}. Access expires ${formatExpiry(data.grant.expires_at)}.`,
         "success",
       );
     }
   } catch (error) {
-    setStatus(`Error: ${error.message}`, "error");
+    setUserDialogStatus(`Error: ${error.message}`, "error");
   } finally {
     generateAccessLinkButton.disabled = false;
   }
