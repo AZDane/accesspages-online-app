@@ -1,3 +1,9 @@
+## 0.1.0-beta.19
+
+- Show a simple secure-connection progress view after successful enrollment, without token or server-configuration instructions.
+- Explain the one-time wait and automatic continuation; keep saved enrollment and retry guidance clear after reloads or temporary connection failures.
+- Preserve enrollment, certificate issuance, identity, retry timing and existing app data during the normal update.
+
 ## 0.1.0-beta.18
 
 - Send Nginx startup diagnostics directly to stderr without changing the existing logging policy or process isolation.

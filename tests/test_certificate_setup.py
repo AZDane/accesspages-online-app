@@ -60,13 +60,31 @@ class CertificateSetupTests(unittest.TestCase):
                     self.assertTrue(status['enrolled'])
                     self.assertFalse(status['ready'])
                     self.assertFalse(status['admin_ready'])
-                    self.assertIn('certificate setup', status['message'])
-                    self.assertIn('couple of minutes', status['message'])
-                    self.assertIn('continue automatically', status['message'])
+                    self.assertEqual(status['message'], 'Setting up your secure connection')
                     self.assertNotIn('do-not-render', json.dumps(status))
                 start.assert_not_called()
             instance.installation.enroll.assert_not_called()
             self.assertEqual((instance.installation.root / 'binding.json').read_bytes(), before)
+
+    def test_saved_enrollment_and_retry_copy_preserve_authority_and_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            instance = pending_runtime(root)
+            with patch.object(runtime, 'ROOT', root):
+                self.assertFalse(instance.prepare())
+                original = instance.public_status()
+                instance.message = 'Paste the enrollment API token to connect this Home Assistant.'
+                self.assertIn('Your enrollment is saved', instance.public_status()['message'])
+                for phase in ('customer certificate issuance', 'connector status', 'installation status', 'Home Assistant connection'):
+                    internal = 'Waiting for ' + phase + '. Retrying automatically.'
+                    instance.message = internal
+                    status = instance.public_status()
+                    self.assertIn('Retrying automatically', status['message'])
+                    self.assertIn('contact support', status['message'])
+                    self.assertNotIn(phase, status['message'])
+                    self.assertEqual(instance.message, internal, 'Internal phase diagnostics are preserved')
+                    self.assertEqual({k: v for k, v in status.items() if k != 'message'},
+                                     {k: v for k, v in original.items() if k != 'message'})
 
     @unittest.skipUnless(os.getenv('GATEWAY_TLS_INTEGRATION') == '1',
                          'Run inside the built package with GATEWAY_TLS_INTEGRATION=1')

@@ -2,19 +2,23 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Access Pages</title>
-<style>body{font:16px system-ui,sans-serif;max-width:38rem;margin:10vh auto;padding:1.5rem;line-height:1.6;color:#172b3a}h1{font-size:1.7rem}p{color:#455866}.progress{display:flex;align-items:center;gap:12px}.spinner{width:24px;height:24px;flex-shrink:0;border:3px solid #d4e0e8;border-top-color:#22b8dc;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}}</style>
-<h1>Access Pages is reconnecting</h1>
-<div class="progress"><span class="spinner" aria-hidden="true"></span><p id="status" role="status">Your enrollment is saved. Waiting for the local app to start…</p></div>
+<title>Connecting Access Pages</title>
+<style>body{font:17px system-ui;background:#071225;color:#e9f1ff;max-width:650px;margin:12vh auto;padding:24px}p{line-height:1.6}.progress{display:flex;align-items:center;gap:12px}.spinner{width:24px;height:24px;flex-shrink:0;border:3px solid #39506b;border-top-color:#22b8dc;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}}</style>
+<h1>Connecting Access Pages</h1>
+<p><span aria-hidden="true">✓ </span>Enrollment complete</p>
+<div class="progress"><span class="spinner" aria-hidden="true"></span><h2 id="status" role="status" style="font-size:1.2em;line-height:1.4">Connecting to Access Pages…</h2></div>
+<p>Your enrollment is saved. Access Pages is finishing the secure connection to the service.</p>
+<p><strong>First-time setup can take a couple of minutes. You can leave this page open — it will continue automatically.</strong></p>
 <script>
+function progressUnavailable(){document.querySelector('#status').textContent='Unable to check progress right now. Retrying automatically; your enrollment is saved.';}
 setInterval(async()=>{
   try {
     const response=await fetch('setup/status',{cache:'no-store'});
-    if(!response.ok)return;
+    if(!response.ok){progressUnavailable();return;}
     const status=await response.json();
     document.querySelector('#status').textContent=status.message;
     if(status.admin_ready||!status.enrolled)location.reload();
-  } catch {}
+  } catch {progressUnavailable();}
 },2000);
 </script>
 </html>

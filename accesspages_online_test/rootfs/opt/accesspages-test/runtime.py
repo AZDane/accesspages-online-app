@@ -125,7 +125,7 @@ class Runtime:
     def enroll(self,link):
         with self.lock:
             route=self.installation.enroll(link)
-            self.message='Enrolled. Preparing the customer TLS certificate.'
+            self.message='Setting up your secure connection'
             return {'enrolled':True,'gateway_id':route['gateway_id']}
 
     def reset_service_connection(self):
@@ -169,8 +169,13 @@ class Runtime:
                     with socket.create_connection(('127.0.0.1',port),timeout=0.2):pass
             except OSError:ready=False
         if ready:ready=self.connector_ready()
-        message='Starting local app services.' if not ready and self.message.startswith('Ready') else self.message
-        return {'message':message,'enrolled':(self.installation.root/'binding.json').exists(),
+        enrolled=(self.installation.root/'binding.json').exists()
+        message='Finishing your connection…' if not ready and self.message.startswith('Ready') else self.message
+        if enrolled and message=='Paste the enrollment API token to connect this Home Assistant.':
+            message='Your enrollment is saved. Reconnecting to Access Pages…'
+        if enrolled and message.startswith('Waiting for ') and message.endswith('. Retrying automatically.'):
+            message='We could not finish connecting yet. Retrying automatically; your enrollment is saved. If this continues, contact support.'
+        return {'message':message,'enrolled':enrolled,
                 'ready':bool(ready),'admin_ready':self.admin_ready(),
                 'device_data':self.device_mode,
                 'migration_required':not self.ha_ready, 'migration_reason':self.ha_reason}
@@ -217,7 +222,7 @@ class Runtime:
         if now-self.last_certificate>3600 or not (ROOT/'tls/guest.crt').exists():
             self.phase='customer certificate issuance'
             if not self.installation.ensure_certificate():
-                self.message='Enrolled. Preparing your secure connection. This one-time certificate setup can take a couple of minutes. This page will continue automatically.'
+                self.message='Setting up your secure connection'
                 return False
             changed=not (ROOT/'tls/guest.crt').exists() or (ROOT/'tls/guest.crt').read_bytes()!=(self.installation.root/'guest.crt').read_bytes()
             for name in ('guest.crt','guest.key'):

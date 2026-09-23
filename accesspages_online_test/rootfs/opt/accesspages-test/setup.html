@@ -1,8 +1,14 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect Access Pages</title>
 <style>body{font:17px system-ui;background:#071225;color:#e9f1ff;max-width:650px;margin:12vh auto;padding:24px}input,button{font:inherit;padding:12px;border-radius:8px;box-sizing:border-box}input{width:100%;margin:12px 0}button{background:#22b8dc;border:0}p{line-height:1.6}[hidden]{display:none}.progress{display:flex;align-items:center;gap:12px}.spinner{width:24px;height:24px;flex-shrink:0;border:3px solid #39506b;border-top-color:#22b8dc;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}}</style></head><body>
-<h1>Connect Access Pages</h1><p>Request an enrollment API token from your service operator, then paste it here to connect this Home Assistant. The token is used once.</p>
-<p>NHP Server address: <strong>SERVICE_ADDRESS</strong><br>Set this address on the app’s Configuration page before enrollment.</p>
-<form><label for="token">Enrollment API token</label><input id="token" type="password" autocomplete="off" required><button>Connect</button></form><div id="progress" class="progress" hidden><span class="spinner" aria-hidden="true"></span><p id="progress-status" role="status">Connecting…</p></div><p id="status" role="status"></p>
+<h1 id="heading">Connect Access Pages</h1>
+<section id="enrollment-instructions"><p>Request an enrollment API token from your service operator, then paste it here to connect this Home Assistant. The token is used once.</p>
+<p>NHP Server address: <strong>SERVICE_ADDRESS</strong><br>Set this address on the app’s Configuration page before enrollment.</p></section>
+<form><label for="token">Enrollment API token</label><input id="token" type="password" autocomplete="off" required><button>Connect</button></form>
+<p id="enrollment-complete" hidden><span aria-hidden="true">✓ </span>Enrollment complete</p>
+<div id="progress" class="progress" hidden><span class="spinner" aria-hidden="true"></span><h2 id="progress-status" role="status" style="font-size:1.2em;line-height:1.4">Connecting…</h2></div>
+<section id="connection-details" hidden><p>Your Home Assistant is enrolled successfully. Access Pages is now finishing the secure connection to the service.</p>
+<p><strong>This one-time setup can take a couple of minutes. You can leave this page open — it will continue automatically.</strong></p></section>
+<p id="status" role="status"></p>
 <script>
 const csrf='SETUP_CSRF';
 const form=document.querySelector('form');
@@ -10,30 +16,38 @@ const progress=document.querySelector('#progress');
 const progressStatus=document.querySelector('#progress-status');
 const status=document.querySelector('#status');
 let submitting=false,enrolled=false;
-function showProgress(message){form.hidden=true;progress.hidden=false;progressStatus.textContent=message;status.textContent='';}
+function showProgress(message){
+  form.hidden=true;progress.hidden=false;progressStatus.textContent=message;status.textContent='';
+  document.querySelector('#enrollment-instructions').hidden=enrolled;
+  document.querySelector('#enrollment-complete').hidden=!enrolled;
+  document.querySelector('#connection-details').hidden=!enrolled;
+  document.querySelector('#heading').textContent=enrolled?'Connecting Access Pages':'Connect Access Pages';
+  document.title=document.querySelector('#heading').textContent;
+}
 form.onsubmit=async event=>{
   event.preventDefault();if(submitting||enrolled)return;
   submitting=true;
   const field=document.querySelector('#token');const token=field.value;field.value='';
-  showProgress('Connecting to OpenNHP Service…');
+  showProgress('Connecting to Access Pages…');
   try{
     const response=await fetch('setup/enroll',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Pages-CSRF':csrf},body:JSON.stringify({enrollment_token:token})});
     if(!response.ok)throw Error();
-    enrolled=true;showProgress('Enrolled. Preparing the customer TLS certificate…');
+    enrolled=true;showProgress('Setting up your secure connection');
   }catch{
     form.hidden=false;progress.hidden=true;
-    status.textContent='Could not enroll. Check the token and NHP Server address, then try again.';
+    status.textContent='Could not enroll. Check the setup credential and try again. If this continues, contact support.';
   }finally{submitting=false;}
 };
 setInterval(async()=>{
   if(submitting)return;
   try{
-    const response=await fetch('setup/status',{cache:'no-store'});if(!response.ok)return;
+    const response=await fetch('setup/status',{cache:'no-store'});
+    if(!response.ok){if(enrolled)showProgress('Unable to check progress right now. Retrying automatically; your enrollment is saved.');return;}
     const state=await response.json();
     if(state.enrolled){enrolled=true;showProgress(state.message);}
     if(state.ready)location.reload();
   }catch{
-    if(enrolled)showProgress('Waiting for the local app to respond…');
+    if(enrolled)showProgress('Unable to check progress right now. Retrying automatically; your enrollment is saved.');
   }
 },3000);
 </script></body></html>
