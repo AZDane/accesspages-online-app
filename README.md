@@ -7,7 +7,7 @@ The app includes Configuration filters and optional real sensor/light access thr
 ## Install on a dedicated HA test system
 
 1. In Home Assistant, open **Settings → Apps → App store → Repositories** (older versions call these add-ons).
-2. Add `https://github.com/AZDane/accesspages-online-test`.
+2. Add `https://github.com/AZDane/accesspages-online-app`.
 3. Install **Access Pages Online test**, start it, and choose **Open web UI**.
 4. Paste the private, single-use enrollment API token supplied by the beta operator. The hosted beta must be running before enrollment can complete.
 

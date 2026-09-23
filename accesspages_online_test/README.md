@@ -7,7 +7,7 @@ This version tests NHP using a built-in demo lock, light and temperature sensor.
 ## Install on a dedicated HA test system
 
 1. In Home Assistant, open **Settings → Apps → App store → Repositories** (older versions call these add-ons).
-2. Add `https://github.com/AZDane/accesspages-online-test`.
+2. Add `https://github.com/AZDane/accesspages-online-app`.
 3. Install **Access Pages Online test**, start it, and choose **Open web UI**.
 4. Set NHP Server address to `nhp.beta.accesspages.app:62206` on the app’s Configuration page, then open the app and paste the one-use enrollment API token supplied by the beta operator. The hosted beta must be running before enrollment can complete.
 
