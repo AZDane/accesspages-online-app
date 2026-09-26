@@ -4,7 +4,23 @@ configuration:
     description: Native OpenNHP Server address and UDP port. Must match the public bootstrap settings shipped with this beta app.
   resource_isolation:
     name: Resource isolation
-    description: "page (default) shares one site among guests on the same page. guest gives each invitation its own site. Every guest has a separate session in both modes. Changing this setting and restarting revokes all existing invitations; page settings are kept. Create new invitations afterward."
+    description: >-
+      page (default): shares one site among guests on the same page. Site setup
+      starts when the page is created; later invitations reuse it. Every guest
+      has a separate session and can be revoked individually in both modes.
+
+      guest: creates a separate site for each invitation, so its endpoint can be
+      removed individually. Link creation can take longer and uses more of the
+      beta's limited site capacity. Adding or removing sites can briefly
+      interrupt other guests while the connection restarts.
+
+      Both modes use one worker per page. Separate sites do not distinguish
+      devices sharing a public IP: another guest's open endpoint may still be
+      reachable, but protected data and controls require that guest's valid session.
+
+      Save and restart to apply a mode change. This revokes ALL existing
+      invitations and sessions; page settings are kept. Create new invitations
+      afterward. Restarting without changing modes keeps existing invitations.
   include_domains:
     name: Include entity types
     description: "Comma-separated entity types, for example sensor,light. Leave both Include fields empty to show all supported sensors and lights. An entity matching either Include field is eligible; exclusions always win. Choose individual entities and controls on each page."
