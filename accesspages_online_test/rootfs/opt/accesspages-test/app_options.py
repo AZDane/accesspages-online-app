@@ -6,6 +6,13 @@ import re
 FILTERS = ("include_domains", "include_areas", "exclude_domains", "exclude_entities")
 
 
+def resource_isolation(options):
+    value = options.get('resource_isolation', 'page')
+    if value not in ('page', 'guest'):
+        raise ValueError('Resource isolation must be page or guest')
+    return value
+
+
 def read_options(root):
     path = Path(root) / "options.json"
     if not path.exists():

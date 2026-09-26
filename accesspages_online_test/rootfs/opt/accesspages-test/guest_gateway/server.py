@@ -16,6 +16,8 @@ import re
 import mimetypes
 import os
 import secrets
+import socket
+import socketserver
 import sqlite3
 import sys
 import time
@@ -36,6 +38,8 @@ from config import (
     GATEWAY_VERSION,
     GATEWAY_ROLE,
     GATEWAY_BOUND_PAGE_ID,
+    GATEWAY_HTTP_SOCKET,
+    GATEWAY_FRONTEND_UID,
     HA_BASE_URL,
     HA_BROKER_TOKEN,
     HA_BROKER_URL,
@@ -270,6 +274,23 @@ class GatewayHTTPServer(ThreadingHTTPServer):
             self._request_slots.release()
 
 
+class GatewayUnixServer(GatewayHTTPServer):
+    address_family = socket.AF_UNIX
+
+    def server_bind(self):
+        socketserver.UnixStreamServer.server_bind(self)
+        os.chmod(self.server_address, 0o660)
+        self.server_name, self.server_port = 'localhost', 0
+
+    def get_request(self):
+        from broker_transport import peer_uid
+        connection, _address = super().get_request()
+        if peer_uid(connection) != int(GATEWAY_FRONTEND_UID):
+            connection.close()
+            raise PermissionError('Frontend identity required')
+        return connection, ('local', 0)
+
+
 ACCESS_SERVICE_CLIENT = nhp.NHPClient()
 if nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}:
     PAGE_STORE.before_revoke = ACCESS_SERVICE_CLIENT.prepare_revocations
@@ -301,6 +322,9 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "GuestGateway/0.5"
 
     def _role_allows(self, path):
+        if nhp.ENABLED and GATEWAY_ROLE == 'guest':
+            prefix = '/api/access/' + GATEWAY_BOUND_PAGE_ID
+            return bool(GATEWAY_BOUND_PAGE_ID) and (path == prefix or path.startswith(prefix + '/'))
         if path == "/admin" or path.startswith("/api/admin/"):
             return GATEWAY_ROLE in {"admin", "combined"}
         if path.startswith("/access/") or path.startswith("/api/access/"):
@@ -694,6 +718,9 @@ class Handler(BaseHTTPRequestHandler):
             return False
 
     def _load_page(self, page_id):
+        if nhp.ENABLED and GATEWAY_ROLE == 'guest' and page_id != GATEWAY_BOUND_PAGE_ID:
+            self._send_json(404, {'error': 'not found'})
+            return None
         try:
             return PAGE_STORE.load(page_id)
         except (PageConfigError, PageNotFoundError) as error:
@@ -982,6 +1009,9 @@ class Handler(BaseHTTPRequestHandler):
         return page
 
     def _send_ha_error(self, error):
+        if nhp.ENABLED and GATEWAY_ROLE == "guest" and error.status in (401, 403):
+            self._send_json(error.status, {"error": "This access link has expired or been revoked."})
+            return
         payload = {"error": str(error)}
         if error.status is not None:
             payload["ha_status"] = error.status
@@ -1310,6 +1340,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        page_instance_id = page.get("instance_id", "")
         raw_token = secrets.token_urlsafe(32)
         grant_id = f"grant_{secrets.token_urlsafe(12)}"
         target_path = (
@@ -1328,6 +1359,7 @@ class Handler(BaseHTTPRequestHandler):
                 grant_id=grant_id,
                 target_path=target_path,
                 **nhp_options,
+                **({"page_instance_id": page_instance_id} if nhp.ENABLED else {}),
             )
         except AccessServiceError as error:
             self._send_access_service_error(error)
@@ -1375,9 +1407,30 @@ class Handler(BaseHTTPRequestHandler):
         # The remote AccessLink request may take long enough for an administrator to
         # update or revoke this page. Reload before committing so a stale page
         # snapshot can never restore revoked grants or overwrite newer policy.
-        page = PAGE_STORE.load(page_id)
-        page["access_grants"].insert(0, grant)
-        PAGE_STORE.replace(page_id, page)
+        with PAGE_STORE.authority_guard(write=True):
+            try:
+                page = PAGE_STORE.load(page_id)
+                if page.get("instance_id", "") != page_instance_id:
+                    raise PageNotFoundError(page_id)
+                if nhp.ENABLED and nhp.INSTALLATION_ROUTING and nhp.resource_for_grant(page_id, page_instance_id, grant['token_hash']) != grant['resource_id']:
+                    raise PageNotFoundError(page_id)
+            except (PageNotFoundError, AccessServiceError):
+                try:
+                    ACCESS_SERVICE_CLIENT.delete_access_link(
+                        resource_id=grant.get("resource_id", ""),
+                        access_link_id=grant.get("access_link_id", ""), page_id=page_id, grant_id=grant_id)
+                except AccessServiceError:
+                    pass
+                if nhp.ENABLED and nhp.INSTALLATION_ROUTING:
+                    nhp.route_reservations.cancel(os.environ['GATEWAY_DATA_DIR'], grant['token_hash'])
+                self._send_json(HTTPStatus.CONFLICT, {"error": "Page changed while creating invitation; please retry"})
+                return
+            page["access_grants"].insert(0, grant)
+            PAGE_STORE.replace(page_id, page)
+            if nhp.ENABLED and nhp.INSTALLATION_ROUTING:
+                # The supervisor reads grants and pending intents under this same
+                # lock, so it cannot observe a gap between provisioning and commit.
+                nhp.route_reservations.cancel(os.environ['GATEWAY_DATA_DIR'], grant['token_hash'])
         try:
             ACTIVITY_STORE.register_guest(page_id, grant)
         except (OSError, sqlite3.Error):
@@ -1809,9 +1862,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.action_deadline = None
-        if nhp.ENABLED and urlparse(self.path).path == "/handoff":
-            if self._valid_request_envelope(): nhp.handoff(self, RUNTIME)
-            return
         if not self._valid_request_envelope():
             return
         path = urlparse(self.path).path
@@ -1879,6 +1929,12 @@ def run():
     if nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}:
         nhp.start_revocation_worker(PAGE_STORE)
     PAGES_DIR.mkdir(parents=True, exist_ok=True)
+    if nhp.ENABLED and GATEWAY_ROLE == 'guest':
+        Path(GATEWAY_HTTP_SOCKET).unlink(missing_ok=True)
+        server = GatewayUnixServer(GATEWAY_HTTP_SOCKET, Handler)
+        print(f'Guest worker ready for page {GATEWAY_BOUND_PAGE_ID}', flush=True)
+        server.serve_forever()
+        return
     if (
         GATEWAY_ROLE == "guest"
         and not nhp.ENABLED

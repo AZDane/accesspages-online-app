@@ -13,7 +13,11 @@ The app supports selected Home Assistant sensors, binary sensors and lights thro
 
 The initial installation builds pinned OpenNHP/NHP-FRP source and can take several minutes. Supported architectures are amd64 and aarch64. No router port forwarding or manually assembled keys, hostnames or tunnel credentials are required.
 
-The app retains its own Gateway identity, separate connector identity, and TLS private key. Admin, Guest, device broker, customer TLS and outbound connector processes use separate local identities. Pages and permitted sensor/light actions are configured through Home Assistant Ingress.
+The app retains its own Gateway identity, separate connector identity, and TLS private key. Admin, device broker, customer TLS, outbound connector and each page's guest worker use separate local identities. The broker issues guest sessions and checks current authorization on every protected request. Pages and permitted sensor/light actions are configured through Home Assistant Ingress.
+
+**Resource isolation** defaults to `page`: guests on one page share a site, with separate guest sessions. Select `guest` for a separate site per invitation. Both modes keep separate workers for each page. Changing modes and restarting revokes all invitations while keeping page settings. See [resource isolation](DOCS.md#resource-isolation) before changing this option.
+
+This source update requires a coordinated operator cutover of OpenNHP Service and the app. Revoke existing invitations before cutover, preserve pages and app data, and create fresh invitations afterward. Existing invitations and sessions are not carried forward; see [the app guide](DOCS.md).
 
 This is a beta for dedicated test installations. A successful container test does not establish that every HAOS/Supervisor/device combination works. Preserve app data; resetting or restoring older identities requires operator reconciliation.
 

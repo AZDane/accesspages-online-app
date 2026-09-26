@@ -32,8 +32,11 @@ LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD
       io.hass.name="Access Pages Online test" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
 RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \
     && addgroup -g 2000 access-pages \
-    && for entry in admin:1001 guest:1002 broker:1003 tls:1004 connector:1005; do \
-         adduser -D -H -u "${entry#*:}" -G access-pages "access-${entry%:*}"; \
+    && addgroup -g 2001 access-workers \
+    && addgroup -g 2002 access-frontend \
+    && for entry in admin:1001 broker:1003 tls:1004 connector:1005; do \
+         addgroup -g "${entry#*:}" "access-${entry%:*}" \
+         && adduser -D -H -u "${entry#*:}" -G "access-${entry%:*}" "access-${entry%:*}" || exit 1; \
        done
 COPY --from=protocol-build /out/machinectl /opt/machinectl
 COPY --from=protocol-build /out/frpc /opt/frpc

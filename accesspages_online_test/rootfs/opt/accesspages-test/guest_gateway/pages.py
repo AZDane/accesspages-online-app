@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 import re
+import secrets
 import stat
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -130,6 +131,7 @@ class PageStore:
                 f"A page with the ID '{page['id']}' already exists"
             )
 
+        page['instance_id'] = secrets.token_hex(16)
         self._write(path, page)
         return page
 
@@ -149,6 +151,9 @@ class PageStore:
         # Access grants are security state and are never accepted from the
         # browser's normal page-edit payload.
         page["access_grants"] = current["access_grants"]
+        page.pop('instance_id', None)
+        if 'instance_id' in current:
+            page['instance_id'] = current['instance_id']
         self._write(current_path, page)
         return page
 
@@ -224,6 +229,10 @@ class PageStore:
         if not path.exists():
             raise PageNotFoundError(page_id)
         validated = validate_page(page, required_id=page_id)
+        current = self._load_unlocked(page_id)
+        validated.pop('instance_id', None)
+        if 'instance_id' in current:
+            validated['instance_id'] = current['instance_id']
         self._write(path, validated)
         return validated
 
@@ -422,6 +431,11 @@ def validate_page(payload: object, required_id: str | None = None) -> dict:
         raise PageConfigError("Page must be a JSON object")
 
     page_id = validate_page_id(payload.get("id", ""))
+    identity = {}
+    if 'instance_id' in payload:
+        if not isinstance(payload['instance_id'], str) or not re.fullmatch(r'[a-f0-9]{32}', payload['instance_id']):
+            raise PageConfigError('Invalid page creation identity')
+        identity['instance_id'] = payload['instance_id']
 
     if required_id is not None and page_id != required_id:
         raise PageConfigError("The page ID cannot be changed after creation")
@@ -585,6 +599,7 @@ def validate_page(payload: object, required_id: str | None = None) -> dict:
 
     return {
         "id": page_id,
+        **identity,
         "title": title,
         "description": description,
         "proximity": {

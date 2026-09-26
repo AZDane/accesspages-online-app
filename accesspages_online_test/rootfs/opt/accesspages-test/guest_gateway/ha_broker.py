@@ -5,6 +5,12 @@ from hashlib import sha256
 import json
 import math
 import os
+import socketserver
+import threading
+from datetime import datetime, timezone
+from broker_transport import peer_uid
+from guest_auth import GuestAuthority, GuestAuthorizationError
+import nhp
 import feature_policy
 from pathlib import Path
 
@@ -19,14 +25,8 @@ from pages import PageConfigError, PageNotFoundError, PageStore
 
 HOST = os.getenv("HA_BROKER_HOST", "0.0.0.0")
 PORT = int(os.getenv("HA_BROKER_PORT", "8082"))
-TOKEN = os.environ["HA_BROKER_TOKEN"]
 ADMIN_TOKEN = os.environ["HA_BROKER_ADMIN_TOKEN"]
-if hmac.compare_digest(TOKEN, ADMIN_TOKEN):
-    raise RuntimeError("HA broker guest and admin tokens must be distinct")
 PAGE_STORE = PageStore(Path(os.getenv("HA_BROKER_POLICY_DIR", "/policy")))
-PAGE_CAPABILITY_REGISTRY = Path(os.getenv(
-    "HA_PAGE_CAPABILITY_REGISTRY", "/policy-capabilities/page-capabilities.json"
-))
 BACKEND = os.getenv("HA_BROKER_BACKEND", "homeassistant")
 DISCOVERY_POLICY = {
     name: frozenset(value.strip() for value in os.getenv("HA_ENTITY_" + name.upper(), "").split(",") if value.strip())
@@ -307,43 +307,17 @@ def send_notification(target, title, message):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _authorized(self, *, admin=False):
-        supplied = self.headers.get("X-Broker-Token", "")
-        if admin:
-            return hmac.compare_digest(supplied, ADMIN_TOKEN)
-        return hmac.compare_digest(supplied, TOKEN)
-
-    def _admin_request(self):
-        role = self.headers.get("X-Broker-Role", "guest")
-        if role not in {"guest", "admin"}:
-            return None
-        return self.path == "/v1/discovery" or role == "admin"
-
-    def _authorized_page(self):
-        supplied = self.headers.get("X-Broker-Token", "")
-        if not supplied:
-            return ""
-        try:
-            registry = json.loads(
-                PAGE_CAPABILITY_REGISTRY.read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError):
-            return ""
-        supplied_hash = sha256(supplied.encode()).hexdigest()
-        for page_id, expected_hash in registry.items():
-            if hmac.compare_digest(supplied_hash, str(expected_hash)):
-                return str(page_id)
-        return ""
-
     def log_message(self, *_args):
         return
 
-    def _send(self, status, payload):
+    def _send(self, status, payload, headers=None):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -374,108 +348,204 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
-        role = self.headers.get("X-Broker-Role", "guest")
-        admin_request = role == "admin"
-        bound_page_id = "" if admin_request else self._authorized_page()
-        if role not in {"guest", "admin"} or not (
-            self._authorized(admin=True) if admin_request else bound_page_id
-        ):
-            self._send(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+        if (self.headers.get('X-Broker-Role') != 'admin'
+                or not hmac.compare_digest(self.headers.get('X-Broker-Token', ''), ADMIN_TOKEN)):
+            self._send(401, {'error': 'unauthorized'})
             return
         try:
-            payload = self._payload()
-            if feature_policy.limited():
-                allowed = {
-                    "/v1/states": {"entity_ids"},
-                    "/v1/page-action": {"page_id", "resource_id", "action_id", "parameters", "grant_deadline"},
-                    "/v1/discovery": {"force"},
-                    "/v1/notification-targets": set(),
-                    "/v1/send-notification": {"target", "title", "message"},
-                }
-                if self.path not in allowed:
-                    raise BrokerPolicyError("This operation is not enabled in this pilot", HTTPStatus.FORBIDDEN)
-                if set(payload) - allowed[self.path]:
-                    raise BrokerPolicyError("Unknown request fields")
-            if self.path == "/v1/states":
-                requested = payload.get("entity_ids")
-                if not isinstance(requested, list) or not requested or not all(isinstance(item, str) for item in requested):
-                    raise BrokerPolicyError("Entity IDs are required")
-                assigned = {
-                    resource["entity_id"]
-                    for page in (
-                        [_page(bound_page_id)] if bound_page_id else
-                        [_page(item["id"]) for item in PAGE_STORE.list_pages()]
-                    )
-                    for resource in page["resources"]
-                }
-                if any(item not in assigned for item in requested):
-                    raise BrokerPolicyError("Entity is not assigned", HTTPStatus.FORBIDDEN)
-                states = authorized_states(set(requested))
-                self._send(200, states)
-            elif self.path == "/v1/camera-image":
-                body, content_type = camera_image(
+            self._dispatch(self._payload())
+        except (BrokerPolicyError, ValueError) as error:
+            self._send(getattr(error, 'status', 400), {'error': str(error) or 'Invalid request'})
+        except HomeAssistantError:
+            self._send(502, {'error': 'Home Assistant failed'})
+
+    def _dispatch(self, payload, bound_page_id='', grant_deadline=None):
+        admin_request = not bound_page_id
+        if feature_policy.limited():
+            allowed = {
+                "/v1/states": {"entity_ids"},
+                "/v1/page-action": {"page_id", "resource_id", "action_id", "parameters", "grant_deadline"},
+                "/v1/discovery": {"force"},
+                "/v1/notification-targets": set(),
+                "/v1/send-notification": {"target", "title", "message"},
+            }
+            if self.path not in allowed:
+                raise BrokerPolicyError("This operation is not enabled in this pilot", HTTPStatus.FORBIDDEN)
+            if set(payload) - allowed[self.path]:
+                raise BrokerPolicyError("Unknown request fields")
+        if self.path == "/v1/states":
+            requested = payload.get("entity_ids")
+            if not isinstance(requested, list) or not requested or not all(isinstance(item, str) for item in requested):
+                raise BrokerPolicyError("Entity IDs are required")
+            assigned = {
+                resource["entity_id"]
+                for page in (
+                    [_page(bound_page_id)] if bound_page_id else
+                    [_page(item["id"]) for item in PAGE_STORE.list_pages()]
+                )
+                for resource in page["resources"]
+            }
+            if any(item not in assigned for item in requested):
+                raise BrokerPolicyError("Entity is not assigned", HTTPStatus.FORBIDDEN)
+            states = authorized_states(set(requested))
+            self._send(200, states)
+        elif self.path == "/v1/camera-image":
+            body, content_type = camera_image(
+                bound_page_id or str(payload.get("page_id", "")),
+                str(payload.get("resource_id", "")),
+            )
+            self._send_image(body, content_type)
+        elif self.path == "/v1/page-action":
+            self._send(
+                200,
+                execute_page_action(
                     bound_page_id or str(payload.get("page_id", "")),
                     str(payload.get("resource_id", "")),
-                )
-                self._send_image(body, content_type)
-            elif self.path == "/v1/page-action":
-                self._send(
-                    200,
-                    execute_page_action(
-                        bound_page_id or str(payload.get("page_id", "")),
-                        str(payload.get("resource_id", "")),
-                        str(payload.get("action_id", "")),
-                        payload.get("parameters", {}),
-                        payload.get("grant_deadline"),
-                    ),
-                )
-            elif self.path == "/v1/proximity":
-                self._send(
-                    200,
-                    verify_page_proximity(
-                        bound_page_id or str(payload.get("page_id", "")),
-                        payload.get("reading"),
-                    ),
-                )
-            elif self.path == "/v1/notification-targets":
-                if not admin_request:
-                    raise BrokerPolicyError("Admin authority required", HTTPStatus.FORBIDDEN)
-                self._send(
-                    200,
-                    {"targets": notification_targets()},
-                )
-            elif self.path == "/v1/send-notification":
-                if not admin_request:
-                    raise BrokerPolicyError("Admin authority required", HTTPStatus.FORBIDDEN)
-                self._send(
-                    200,
-                    send_notification(
-                        str(payload.get("target", "")),
-                        str(payload.get("title", "")),
-                        str(payload.get("message", "")),
-                    ),
-                )
-            elif self.path == "/v1/discovery":
-                if not admin_request:
-                    raise BrokerPolicyError("Admin authority required", HTTPStatus.FORBIDDEN)
-                self._send(
-                    200,
-                    HA_CLIENT.discover_entities(
-                        force=bool(payload.get("force", False))
-                    ),
-                )
-            else:
-                self._send(404, {"error": "not found"})
-        except (BrokerPolicyError, json.JSONDecodeError) as error:
-            self._send(
-                getattr(error, "status", HTTPStatus.BAD_REQUEST),
-                {"error": str(error) or "Invalid request"},
+                    str(payload.get("action_id", "")),
+                    payload.get("parameters", {}),
+                    payload.get("grant_deadline") if admin_request else grant_deadline,
+                ),
             )
-        except HomeAssistantError:
-            self._send(HTTPStatus.BAD_GATEWAY, {"error": "Home Assistant failed"})
+        elif self.path == "/v1/proximity":
+            self._send(
+                200,
+                verify_page_proximity(
+                    bound_page_id or str(payload.get("page_id", "")),
+                    payload.get("reading"),
+                ),
+            )
+        elif self.path == "/v1/notification-targets":
+            if not admin_request:
+                raise BrokerPolicyError("Admin authority required", HTTPStatus.FORBIDDEN)
+            self._send(
+                200,
+                {"targets": notification_targets()},
+            )
+        elif self.path == "/v1/send-notification":
+            if not admin_request:
+                raise BrokerPolicyError("Admin authority required", HTTPStatus.FORBIDDEN)
+            self._send(
+                200,
+                send_notification(
+                    str(payload.get("target", "")),
+                    str(payload.get("title", "")),
+                    str(payload.get("message", "")),
+                ),
+            )
+        elif self.path == "/v1/discovery":
+            if not admin_request:
+                raise BrokerPolicyError("Admin authority required", HTTPStatus.FORBIDDEN)
+            self._send(
+                200,
+                HA_CLIENT.discover_entities(
+                    force=bool(payload.get("force", False))
+                ),
+            )
+        else:
+            self._send(404, {"error": "not found"})
+
+class GuestHandler(Handler):
+    def _authorized_page(self):
+        # The OS identity chooses the page. Possessing another page's capability
+        # and guest cookie cannot change that binding. Read on each request so a
+        # removed worker immediately loses access, even if it is still running.
+        try:
+            registry = json.loads(self.server.registry.read_text())
+            record = registry[str(peer_uid(self.connection))]
+            supplied = sha256(self.headers.get('X-Broker-Token', '').encode()).hexdigest()
+            if (hmac.compare_digest(supplied, record['capability_hash'])
+                    and PAGE_STORE.load(record['page']).get('instance_id', '') == record['instance_id']):
+                return record['page']
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return ''
+
+    def do_GET(self):
+        self._send(404, {'error': 'not found'})
+
+    def do_POST(self):
+        try:
+            if self.headers.get('X-Broker-Role', 'guest') != 'guest':
+                self._send(401, {'error': 'unauthorized'})
+                return
+            payload = self._payload()
+            allowed = {
+                '/v1/session': set(), '/v1/states': {'entity_ids'},
+                '/v1/camera-image': {'page_id', 'resource_id'},
+                '/v1/page-action': {'page_id', 'resource_id', 'action_id', 'parameters'},
+                '/v1/proximity': {'page_id', 'reading'},
+            }
+            if self.path not in allowed:
+                raise BrokerPolicyError('Guest operation unavailable', HTTPStatus.FORBIDDEN)
+            if set(payload) - allowed[self.path]:
+                raise BrokerPolicyError('Unknown request fields')
+            with PAGE_STORE.authority_guard():
+                page_id = self._authorized_page()
+                if not page_id or ('page_id' in payload and payload['page_id'] != page_id):
+                    raise GuestAuthorizationError('Page authority required')
+                session = self.server.authority.authorize(page_id, self.headers.get('X-Guest-Session', ''), self.headers.get('X-NHP-Resource', ''))
+                if (self.path == '/v1/page-action' or
+                        (self.path == '/v1/session' and self.headers.get('X-Guest-Method') not in ('GET', 'HEAD'))):
+                    if self.headers.get('Origin') != nhp.origin_for_resource(session['resource']):
+                        raise BrokerPolicyError('Origin rejected', HTTPStatus.FORBIDDEN)
+                if self.path == '/v1/session':
+                    self._send(200, session)
+                else:
+                    deadline = datetime.fromtimestamp(session['expires'], timezone.utc).isoformat()
+                    self._dispatch(payload, page_id, deadline)
+        except GuestAuthorizationError as error:
+            self._send(401, {'error': str(error)})
+        except (BrokerPolicyError, ValueError) as error:
+            self._send(getattr(error, 'status', 400), {'error': str(error) or 'Invalid request'})
+        except HomeAssistantError as error:
+            status = 401 if error.status == 401 else 502
+            self._send(status, {'error': 'Guest authorization expired' if status == 401 else 'Home Assistant failed'})
+
+
+class GuestServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, path, authority, registry):
+        self.authority = authority
+        self.registry = Path(registry)
+        super().__init__(str(path), GuestHandler)
+        os.chmod(path, 0o660)
+
+
+class HandoffHandler(Handler):
+    _send_json = Handler._send
+
+    def do_GET(self):
+        self._send(404, {'error': 'not found'})
+
+    def do_POST(self):
+        if peer_uid(self.connection) != self.server.frontend_uid:
+            self._send(401, {'error': 'unauthorized'})
+        elif self.path != '/handoff':
+            self._send(404, {'error': 'not found'})
+        else:
+            nhp.handoff(self, self.server.authority)
+
+
+class HandoffServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, path, authority, frontend_uid):
+        self.authority, self.frontend_uid = authority, frontend_uid
+        super().__init__(str(path), HandoffHandler)
+        os.chmod(path, 0o660)
 
 
 def run():
+    path = Path(os.environ['HA_GUEST_BROKER_SOCKET'])
+    path.unlink(missing_ok=True)
+    authority = GuestAuthority(PAGE_STORE, os.environ['HA_GUEST_SESSION_DB'])
+    guest = GuestServer(path, authority, os.environ['HA_PAGE_WORKER_REGISTRY'])
+    threading.Thread(target=guest.serve_forever, name='guest-broker', daemon=True).start()
+    handoff_path = Path(os.environ['HA_HANDOFF_SOCKET'])
+    handoff_path.unlink(missing_ok=True)
+    handoff = HandoffServer(handoff_path, authority, int(os.environ['GATEWAY_FRONTEND_UID']))
+    threading.Thread(target=handoff.serve_forever, name='handoff-broker', daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     server.daemon_threads = True
     server.serve_forever()

@@ -21,7 +21,7 @@ import runtime
 
 
 def pending_runtime(root):
-    for name in ('admin/installation', 'tls', 'public', 'guest', 'broker'):
+    for name in ('admin/installation', 'tls', 'public', 'broker'):
         (root / name).mkdir(parents=True, exist_ok=True)
     installation = root / 'admin/installation'
     (installation / 'connector.json').write_text('{}')
@@ -31,7 +31,7 @@ def pending_runtime(root):
     instance = runtime.Runtime.__new__(runtime.Runtime)
     instance.installation = Mock(root=installation)
     instance.installation.recover_binding.return_value = {
-        'route': {'host': 'gateway.example.test', 'port': 20001}}
+        'gateway_id':'synthetic', 'route': {'host': 'gateway.example.test', 'epoch':1, 'resources':[]}}
     instance.installation.ensure_certificate.return_value = False
     instance.ha_ready = True
     instance.ha_reason = ''
@@ -41,6 +41,7 @@ def pending_runtime(root):
     instance.children = {}
     instance.started = {}
     instance.product = {}
+    instance.page_workers = runtime.PageWorkers(root, runtime.GATEWAY, instance)
     instance.broker_unused = 'synthetic-unused'
     instance.broker_admin = 'synthetic-broker'
     instance.admin_token = 'synthetic-admin'
@@ -122,7 +123,9 @@ class CertificateSetupTests(unittest.TestCase):
                 real_popen = subprocess.Popen
 
                 def capture_process(*args, **kwargs):
-                    return real_popen(*args, **kwargs, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    kwargs.setdefault('stdout', subprocess.PIPE)
+                    kwargs.setdefault('stderr', subprocess.PIPE)
+                    return real_popen(*args, **kwargs)
 
                 def start(role, command, env):
                     started.append(role)
@@ -167,7 +170,7 @@ class CertificateSetupTests(unittest.TestCase):
                     stdout, stderr = process.communicate(timeout=10)
                 self.assertNotIn(b'could not open error log file', stderr)
                 self.assertNotIn(b'privacy-canary', stdout + stderr)
-                self.assertEqual(started, ['broker', 'admin', 'guest', 'tls'])
+                self.assertEqual(started, ['broker', 'admin', 'tls'])
         finally:
             server.shutdown()
             server.server_close()

@@ -139,6 +139,12 @@ class EnrollmentTests(unittest.TestCase):
 
     def test_short_link_revocation_clears_tracking_after_confirmation(self):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'GATEWAY_DATA_DIR': root}), patch.object(nhp, 'INSTALLATION_ROUTING', True):
+            resource = 'a' * 48
+            binding = Path(root) / 'binding.json'
+            routes = Path(root) / 'routes.json'
+            atomic(binding, json.dumps({'gateway_id': GATEWAY, 'route': {'epoch': 1}}))
+            atomic(routes, json.dumps({'gateway_id': GATEWAY, 'epoch': 1, 'isolation': 'page',
+                                      'resources': [{'page_id': 'front-door', 'instance_id': '', 'guest_hash': '', 'resource_id': resource}]}))
             link = LANDING+'/#'+TOKEN
             calls = []
             def operation(body):
@@ -146,10 +152,11 @@ class EnrollmentTests(unittest.TestCase):
                 if body['op'] == 'revoke_link':
                     return {'state': 'revoked', 'network_admission_update': 'applied'}
                 return {'access_link': link, 'expires': 1900000000}
-            with patch.object(nhp, 'machine', side_effect=operation):
+            with patch.object(nhp, 'machine', side_effect=operation), patch.dict(os.environ, {'NHP_BINDING_FILE': str(binding), 'NHP_ROUTES_FILE': str(routes)}):
                 client = nhp.NHPClient()
                 result = client.create_access_link(target_path='/access/front-door?access_token='+'G'*43, expires_in='1h')
                 self.assertEqual(result['access_link_url'], link)
+                self.assertEqual(calls[0]['resource'], resource)
                 self.assertEqual(result['access_link_id'], hashlib.sha256(TOKEN.encode()).hexdigest())
                 client.delete_access_link(access_link_id=result['access_link_id'])
                 self.assertEqual(calls[-1], {'op': 'revoke_link', 'access': TOKEN, 'defer_transport': 15})

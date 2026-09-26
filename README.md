@@ -13,7 +13,9 @@ The app supports selected Home Assistant sensors, binary sensors and lights thro
 
 The initial installation builds pinned OpenNHP/NHP-FRP source and can take several minutes. Supported architectures are amd64 and aarch64. No router port forwarding or manually assembled keys, hostnames or tunnel credentials are required.
 
-The app retains its own Gateway identity, separate connector identity, and TLS private key. Admin, Guest, device broker, customer TLS and outbound connector processes use separate local identities. Pages and permitted sensor/light actions are configured through Home Assistant Ingress.
+The app retains its own Gateway identity, separate connector identity, and TLS private key. Admin, device broker, customer TLS, outbound connector and each page's guest worker use separate local identities. The broker issues guest sessions and checks current authorization on every protected request. Pages and permitted sensor/light actions are configured through Home Assistant Ingress.
+
+**Resource isolation** defaults to `page`: guests on one page share a site, with separate guest sessions. Select `guest` for a separate site per invitation. Both modes keep separate workers for each page. Changing modes and restarting revokes all invitations while keeping page settings. See [resource isolation](accesspages_online_test/DOCS.md#resource-isolation) before changing this option.
 
 This is a beta for dedicated test installations. A successful container test does not establish that every HAOS/Supervisor/device combination works. Preserve app data; resetting or restoring older identities requires operator reconciliation.
 
@@ -21,12 +23,13 @@ See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages
 
 ## Updating
 
-Before upgrading from an older demo version, follow the migration guidance in
-[the app guide](accesspages_online_test/DOCS.md). Refresh the repository in Home Assistant and update **Access Pages Online test**.
-Keep app data. For installations already using normal Home Assistant integration,
-enrollment, pages, guests and pending revocations are preserved.
-Existing browser sessions need a fresh AccessLink handoff. If an old invitation
-is expired or already consumed, create a new invitation after updating.
+This source update requires a coordinated operator cutover of OpenNHP Service
+and the app. It is not an automatic upgrade of existing route or session state.
+Revoke all existing invitations before cutover, preserve page settings and app
+data, and create fresh invitations after the matching service and app are ready.
+Existing invitations and browser sessions are not carried forward. Follow
+[the app guide](accesspages_online_test/DOCS.md); do not reset the connection or
+edit stored state as an upgrade procedure.
 
 The app returns to enrollment after a connection reset. During
 enrollment, the credential input is replaced by a spinner showing certificate

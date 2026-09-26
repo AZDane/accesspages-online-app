@@ -39,9 +39,14 @@ HA_BROKER_URL = os.getenv("HA_BROKER_URL", "").strip().rstrip("/")
 HA_BROKER_TOKEN = os.getenv("HA_BROKER_TOKEN", "").strip()
 HA_BASE_URL = os.getenv("HA_BASE_URL", "").strip().rstrip("/")
 HA_TOKEN = os.getenv("HA_TOKEN", "").strip()
+if GATEWAY_ROLE == "guest" and os.getenv("ACCESS_TRANSPORT") == "nhp" and not HA_BROKER_URL:
+    raise RuntimeError("NHP Guest requires HA_BROKER_URL and the Guest broker socket")
 if HA_BROKER_URL:
-    if not HA_BROKER_TOKEN:
-        raise RuntimeError("HA_BROKER_TOKEN is required with HA_BROKER_URL")
+    if GATEWAY_ROLE == "guest":
+        required_env("HA_GUEST_BROKER_SOCKET")
+        required_env("HA_BROKER_UID")
+    elif not HA_BROKER_TOKEN:
+        raise RuntimeError("HA_BROKER_TOKEN is required for the Admin broker")
 elif not HA_BASE_URL or not HA_TOKEN:
     raise RuntimeError(
         "HA_BASE_URL and HA_TOKEN are required without an HA broker"
@@ -80,7 +85,7 @@ HA_ENTITY_EXCLUDE_DEVICE_CLASSES = csv_env(
 HA_ENTITY_EXCLUDE_ENTITIES = csv_env("HA_ENTITY_EXCLUDE_ENTITIES")
 
 DATA_DIR = Path(os.getenv("GATEWAY_DATA_DIR", "/data"))
-PAGES_DIR = DATA_DIR / "pages"
+PAGES_DIR = Path(os.getenv("GATEWAY_PAGES_DIR", str(DATA_DIR / "pages")))
 ACTIVITY_DB_FILE = Path(
     os.getenv(
         "ACTIVITY_DB_FILE",
@@ -116,6 +121,12 @@ CONNECTOR_PAGE_ROUTES_FILE = Path(os.getenv(
     str(DATA_DIR / "guest-runtime" / "connector-routes.json"),
 ))
 GATEWAY_BOUND_PAGE_ID = os.getenv("GATEWAY_BOUND_PAGE_ID", "").strip()
+GATEWAY_HTTP_SOCKET = os.getenv("GATEWAY_HTTP_SOCKET", "").strip()
+GATEWAY_FRONTEND_UID = os.getenv("GATEWAY_FRONTEND_UID", "").strip()
+if GATEWAY_ROLE == 'guest' and os.getenv('ACCESS_TRANSPORT') == 'nhp':
+    required_env('GATEWAY_BOUND_PAGE_ID')
+    required_env('GATEWAY_HTTP_SOCKET')
+    required_env('GATEWAY_FRONTEND_UID')
 PAGE_CAPABILITY_TOKEN = os.getenv("PAGE_CAPABILITY_TOKEN", "").strip()
 PAGE_CAPABILITY_REGISTRY_FILE = Path(os.getenv(
     "PAGE_CAPABILITY_REGISTRY_FILE",
