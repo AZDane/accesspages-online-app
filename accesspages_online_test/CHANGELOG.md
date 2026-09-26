@@ -1,3 +1,10 @@
+## 0.1.0-beta.20
+
+- Coordinate this update with the matching OpenNHP Service deployment. Revoke all existing invitations before cutover, preserve page settings and app data, and create fresh invitations only after both components are ready. Old route and session schemas are not migrated; see the [update guide](DOCS.md#updating-to-resource-isolation).
+- Add resource isolation: one resource and site per page by default, or one per guest invitation. Each page has a separate guest worker and Linux identity in both modes.
+- Issue guest sessions through the local broker and check each session against its current invitation, page and resource on every protected request. Guests sharing a page retain separate sessions.
+- Remove the obsolete review/demo selector. Connect directly to Home Assistant through the broker, retaining discovery filters and page permissions.
+
 ## 0.1.0-beta.19
 
 - Show a simple secure-connection progress view after successful enrollment, without token or server-configuration instructions.
