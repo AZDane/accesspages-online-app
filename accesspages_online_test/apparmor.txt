@@ -12,6 +12,8 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   capability setgid,
   capability chown,
   capability fowner,
+  # Preserve the setgid bit on runtime directories owned by isolated groups.
+  capability fsetid,
   capability dac_override,
   capability kill,
   signal (receive),
