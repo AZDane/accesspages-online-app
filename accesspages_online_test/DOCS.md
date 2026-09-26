@@ -1,6 +1,6 @@
 # Access Pages Online — Home Assistant app
 
-The current beta uses normal Home Assistant integration. It has no built-in fake device backend. Guest access continues through the existing NHP/AC/FRP architecture; only the local HA broker receives Home Assistant credentials.
+The app connects directly to its Home Assistant installation. Guest access uses the NHP/AC/FRP architecture; only the local HA broker receives Home Assistant credentials.
 
 ## Resource isolation
 
@@ -20,12 +20,6 @@ The current beta has a shared capacity of eight active resources across installa
 ## Updating to resource isolation
 
 Coordinate this source update with the matching OpenNHP Service deployment. The operator must revoke existing invitations and replace old route/session state during cutover, preserving page settings and app data. This package does not migrate old route or session schemas. Create new invitations only after the updated service and app are ready; old invitations and browser sessions are not retained. Do not reset the connection or edit stored state as an upgrade procedure.
-
-## Before upgrading from beta.15
-
-Use the established Admin UI to revoke existing invitations. In the app's Configuration select `device_mode: homeassistant` only for the intended Home Assistant installation. Discover its actual entity IDs and replace old `nhp_demo_*` references in saved pages. Do not create new invitations before the app's first activation.
-
-The app defaults to `review_required`; legacy `demo` is accepted only as a blocked migration state. Until an owner explicitly selects `homeassistant`, no HA broker or guest transport is started. First activation also refuses existing grants, fake resource references or invalid page/activation records. The migration page explains the necessary review and leaves saved data untouched. After a successful empty-grant review, a private local approval marker allows ordinary restarts with newly created normal-HA invitations. If prerequisites were missed, preserve app data and contact support before continuing; never edit the database or files manually.
 
 ## Normal Home Assistant connection
 

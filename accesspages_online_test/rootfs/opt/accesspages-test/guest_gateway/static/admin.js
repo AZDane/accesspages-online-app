@@ -485,8 +485,6 @@ async function loadGatewayStatus() {
     }
 
     gatewayVersion.textContent = data.version || "Unknown";
-    document.getElementById("gateway-device-data").textContent = data.device_data === "homeassistant"
-      ? "Home Assistant" : "Home Assistant setup required";
     gatewayHealth.textContent =
       data.status === "ok" ? "Online" : "Unavailable";
     gatewayService.textContent = data.access_service_api_configured

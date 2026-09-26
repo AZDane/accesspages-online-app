@@ -1819,7 +1819,6 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "status": "ok",
                     "version": GATEWAY_VERSION,
-                    "device_data": os.getenv("GATEWAY_DEVICE_DATA", "homeassistant"),
                     "feature_profile": feature_policy.PROFILE,
                     "page_count": len(PAGE_STORE.list_pages()),
                     "connectors": connector_status,
