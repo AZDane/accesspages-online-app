@@ -5,29 +5,38 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 from contextvars import ContextVar
+from typing import NamedTuple
+from broker_transport import GuestBrokerError, guest_request
 from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-# Each HTTP request binds its authorized page before contacting the HA broker.
-# ContextVar keeps simultaneous requests on the shared Gateway independent.
-AUTHORIZED_NHP_PAGE = ContextVar('authorized_nhp_page', default='')
+class GuestContext(NamedTuple):
+    page: str
+    session: str
+    origin: str
+    resource: str
 
 
-def nhp_page_capability(page_id=""):
-    """Select a local capability only for the page authenticated this request."""
-    authorized = AUTHORIZED_NHP_PAGE.get()
-    if not authorized or (page_id and page_id != authorized):
-        raise HomeAssistantError("Authorized page required for broker")
+AUTHORIZED_NHP_GUEST = ContextVar('authorized_nhp_guest', default=None)
+
+
+def page_capability(page_id):
     try:
-        path = os.environ["NHP_PAGE_CAPABILITIES_FILE"]
-        value = json.loads(Path(path).read_text())[authorized]
+        value = json.loads(Path(os.environ['NHP_PAGE_CAPABILITIES_FILE']).read_text())[page_id]
         if not isinstance(value, str) or len(value) != 43:
             raise ValueError()
-        return authorized, value
+        return value
     except (OSError, ValueError, KeyError, TypeError) as error:
-        raise HomeAssistantError("Page capability unavailable") from error
+        raise HomeAssistantError('Page capability unavailable') from error
+
+
+def nhp_page_capability(page_id=''):
+    context = AUTHORIZED_NHP_GUEST.get()
+    if context is None or (page_id and page_id != context.page):
+        raise HomeAssistantError('Authorized page required for broker')
+    return context.page, page_capability(context.page)
 
 
 CURATED_ACTIONS = {
@@ -342,7 +351,7 @@ def validate_dispatch_deadline(value):
         if deadline.tzinfo is None or deadline <= datetime.now(timezone.utc):
             raise ValueError("Expired deadline")
     except (ValueError, TypeError, AttributeError, OverflowError) as error:
-        raise HomeAssistantError("Guest authorization expired before action dispatch") from error
+        raise HomeAssistantError("Guest authorization expired before action dispatch", status=401) from error
 
 
 class HomeAssistantClient:
@@ -782,12 +791,25 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
         self.broker_role = broker_role
 
     def _request_token(self, page_id=''):
-        path = os.getenv('NHP_PAGE_CAPABILITIES_FILE', '')
-        if self.broker_role != 'guest' or not path:
+        if self.broker_role != 'guest':
             return self.token
         return nhp_page_capability(page_id)[1]
 
+    def _guest_request(self, path, payload, *, image=False):
+        context = AUTHORIZED_NHP_GUEST.get()
+        credential = self._request_token((payload or {}).get('page_id', ''))
+        if context is None:
+            raise HomeAssistantError('Guest session required for broker')
+        try:
+            return guest_request(path, payload, image=image, headers={
+                'X-Broker-Token': credential, 'X-Guest-Session': context.session,
+                'Origin': context.origin, 'X-NHP-Resource': context.resource})
+        except GuestBrokerError as error:
+            raise HomeAssistantError(str(error), status=error.status) from error
+
     def _request(self, method, path, payload=None):
+        if self.broker_role == "guest":
+            return self._guest_request(path, payload)
         data = None
         headers = {
             "X-Broker-Token": self._request_token((payload or {}).get('page_id', '')),
@@ -829,6 +851,11 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
             raise HomeAssistantError(
                 "Broker camera requests require saved policy identifiers"
             )
+        if self.broker_role == "guest":
+            body, content_type = self._guest_request("/v1/camera-image", {"page_id": page_id, "resource_id": resource_id}, image=True)
+            if content_type not in CAMERA_IMAGE_TYPES or not body or len(body) > CAMERA_IMAGE_MAX_BYTES:
+                raise HomeAssistantError("Invalid broker camera image")
+            return body, content_type
         data = json.dumps({
             "page_id": page_id,
             "resource_id": resource_id,
@@ -906,7 +933,7 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
                 "resource_id": resource_id,
                 "action_id": action_id,
                 "parameters": service_data or {},
-                **({"grant_deadline": grant_deadline} if grant_deadline is not None else {}),
+                **({"grant_deadline": grant_deadline} if self.broker_role == "admin" and grant_deadline is not None else {}),
             },
         )
 

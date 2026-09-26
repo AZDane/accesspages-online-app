@@ -38,13 +38,18 @@ class AppOptionsTests(unittest.TestCase):
                 self.assertEqual(broker["HA_TOKEN"], "synthetic-supervisor")
                 instance = runtime.Runtime.__new__(runtime.Runtime)
                 instance.children = {}; instance.started = {}
-                for role in ("admin", "guest", "tls", "connector", "broker"):
+                for role in (*runtime.USERS, 'page:20000'):
+                    identity = {'uid': 20000, 'groups': [runtime.GUEST_BROKER_GROUP]} if role.startswith('page:') else {}
                     with patch.object(runtime.subprocess, "Popen", return_value=Mock()) as spawn:
-                        instance.start(role, ["synthetic"], broker if role == "broker" else runtime.gateway_environment())
+                        instance.start(role, ["synthetic"], broker if role == "broker" else runtime.gateway_environment(), **identity)
                     env = spawn.call_args.kwargs["env"]
                     self.assertNotIn("SUPERVISOR_TOKEN", env)
                     self.assertEqual("HA_TOKEN" in env, role == "broker")
-                    self.assertEqual(spawn.call_args.kwargs["user"], runtime.USERS[role])
+                    uid = identity.get('uid', runtime.USERS.get(role))
+                    self.assertEqual(spawn.call_args.kwargs["user"], uid)
+                    self.assertEqual(spawn.call_args.kwargs["group"], uid)
+                    groups = [runtime.GUEST_BROKER_GROUP] if identity else [runtime.GROUP] if role in ('admin', 'broker') else [runtime.FRONTEND_GROUP] if role == 'tls' else []
+                    self.assertEqual(spawn.call_args.kwargs['extra_groups'], groups)
 
     def test_version_and_profile_come_from_package_and_filters_from_options(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -77,18 +82,25 @@ class AppOptionsTests(unittest.TestCase):
                 root / "tls/guest.key": "key",
                 root / "public/binding.json": "public",
                 root / "admin/page-capabilities.json": "admin-capability",
-                root / "broker/page-capabilities.json": "broker-capability",
-                root / "guest/page-capabilities.json": "guest-capability",
+                root / "broker/page-workers.json": "worker-identities",
+                root / "broker/guest-sessions.db": "sessions",
+                root / "admin/routes.json": "admin-routes",
+                root / "broker/routes.json": "broker-routes",
+                root / "admin/ready-routes.json": "ready-routes",
+                root / "workers/20000/private/capability.json": "page-capability",
             }
             for path, value in {**preserved, **removed}.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(value)
-            (root / "guest/pages").symlink_to(root / "admin/pages")
             request = root / "admin/reset-connection.request"
             request.write_text("reset\n")
             instance = runtime.Runtime.__new__(runtime.Runtime)
             instance.children = {role: Mock() for role in runtime.USERS}
             instance.installation = FakeInstallation(root / "admin/installation")
+            instance.page_workers = runtime.PageWorkers(root, runtime.GATEWAY, instance)
+            instance.page_workers.state['next_uid'] = 20001
+            import route_reservations
+            route_reservations.reserve(root / 'admin', 'front-door', 'a' * 32, 'b' * 64)
             with (
                 patch.object(runtime, "ROOT", root),
                 patch.object(runtime, "Installation", FakeInstallation),
@@ -102,6 +114,7 @@ class AppOptionsTests(unittest.TestCase):
                 self.assertEqual(path.read_text(), value)
             for path in removed:
                 self.assertFalse(path.exists())
-            self.assertFalse((root / "guest/pages").exists())
+            self.assertEqual(instance.page_workers.state, {'next_uid': 20001, 'pages': {}})
+            self.assertEqual(route_reservations.pending(root / 'admin'), [])
             self.assertFalse(request.exists())
             self.assertEqual(instance.message, "Paste the enrollment API token to connect this Home Assistant.")

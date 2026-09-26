@@ -2,13 +2,6 @@
 
 
 def handle_get(handler, path, runtime):
-    if runtime.nhp.ENABLED:
-        with runtime.PAGE_STORE.authority_guard():
-            return _handle_get(handler,path,runtime)
-    return _handle_get(handler,path,runtime)
-
-
-def _handle_get(handler, path, runtime):
     if path.startswith("/api/access/"):
         remainder = path.removeprefix("/api/access/").strip("/")
         parts = remainder.split("/")
@@ -42,7 +35,7 @@ def _handle_get(handler, path, runtime):
 
 def handle_post(handler, path, payload, runtime):
     if runtime.nhp.ENABLED:
-        with runtime.page_action_lock(path.removeprefix("/api/access/").split("/")[0]), runtime.PAGE_STORE.authority_guard():
+        with runtime.page_action_lock(path.removeprefix("/api/access/").split("/")[0]):
             return _handle_post(handler,path,payload,runtime)
     return _handle_post(handler,path,payload,runtime)
 

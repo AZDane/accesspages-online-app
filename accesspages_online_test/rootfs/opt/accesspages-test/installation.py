@@ -264,11 +264,22 @@ Port = 62206
         candidate.unlink()
         return True
 
-    def connector_config(self,health_password=None):
+    def sync_page_routes(self, pages):
+        route = self.operation({'op': 'sync_page_routes', 'pages': pages})
+        binding = json.loads((self.root/'binding.json').read_text())
+        if route.get('gateway_id') != binding['gateway_id'] or route.get('epoch') != binding['route']['epoch']:
+            raise ValueError('Page route binding changed')
+        binding['route'] = route
+        atomic(self.root/'binding.json', json.dumps(binding))
+        connector = json.loads((self.root/'connector.json').read_text())
+        connector['route'] = route
+        atomic(self.root/'connector.json', json.dumps(connector))
+        return route
+
+    def connector_config(self,resources,health_password=None):
         value=json.loads((self.root/'connector.json').read_text())
-        route=value['route']
         health='' if health_password is None else f'webServer.addr = "127.0.0.1"\nwebServer.port = 8084\nwebServer.user = "runtime"\nwebServer.password = {json.dumps(health_password)}\n'
-        return health+f'''serverAddr = {json.dumps(value['connector_host'])}
+        config = health+f'''serverAddr = {json.dumps(value['connector_host'])}
 serverPort = {value['connector_port']}
 loginFailExit = false
 auth.method = "token"
@@ -280,10 +291,13 @@ transport.tls.serverName = "frp-service"
 transport.heartbeatInterval = 10
 transport.heartbeatTimeout = 30
 log.level = "warn"
-[[proxies]]
-name = "guest"
+'''
+        for resource in resources:
+            config += f'''[[proxies]]
+name = {json.dumps(resource['resource_id'])}
 type = "tcp"
 localIP = "127.0.0.1"
-localPort = 8444
-remotePort = {route['port']}
+localPort = {resource['port']}
+remotePort = {resource['port']}
 '''
+        return config

@@ -41,9 +41,18 @@ function authorizationQuery(location) {
 export function createAccessApi(location = window.location) {
   // The module and API share the app's mount point, including HA Ingress.
   const prefix = new URL("../api/access", import.meta.url).pathname;
+  // Pin this document to its own admission. This public selector grants no
+  // access without its matching HttpOnly cookie and live server-side grant.
+  const session = new URLSearchParams((location.hash || "").slice(1)).get("session");
+
+  function requestHeaders(extra = {}) {
+    const headers = {...extra};
+    if (/^[a-f0-9]{32}$/.test(session || "")) headers["X-NHP-Session"] = session;
+    return headers;
+  }
 
   function actionHeaders() {
-    const headers = {"Content-Type": "application/json"};
+    const headers = requestHeaders({"Content-Type": "application/json"});
     const csrf = document.querySelector('meta[name="access-pages-csrf"]')?.content;
     if (csrf) headers["X-Access-Pages-CSRF"] = csrf;
     return headers;
@@ -67,10 +76,10 @@ export function createAccessApi(location = window.location) {
       return `${target}${separator}frame=${frame}`;
     },
     cameraFrame(pageId, resourceId, frame) {
-      return boundedRequest(this.cameraUrl(pageId, resourceId, frame), {cache: "no-store"});
+      return boundedRequest(this.cameraUrl(pageId, resourceId, frame), {cache: "no-store", headers: requestHeaders()});
     },
     fetchPage(pageId) {
-      return boundedRequest(authorizedPath(pageId), {cache: "no-store"});
+      return boundedRequest(authorizedPath(pageId), {cache: "no-store", headers: requestHeaders()});
     },
     runAction(pageId, resourceId, actionId, payload) {
       return boundedRequest(

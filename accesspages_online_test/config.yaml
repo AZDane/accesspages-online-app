@@ -16,6 +16,7 @@ panel_icon: mdi:shield-key-outline
 options:
   server_address: nhp.beta.accesspages.app:62206
   device_mode: review_required
+  resource_isolation: page
   include_domains: ""
   include_areas: ""
   exclude_domains: "alarm_control_panel"
@@ -23,6 +24,7 @@ options:
 schema:
   server_address: str
   device_mode: list(review_required|demo|homeassistant)
+  resource_isolation: list(page|guest)
   include_domains: str?
   include_areas: str?
   exclude_domains: str?

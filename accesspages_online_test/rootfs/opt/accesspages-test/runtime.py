@@ -12,19 +12,27 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from urllib.parse import urlparse
 
 from installation import Installation, atomic
-from app_options import read_options, device_mode, discovery_environment
+from app_options import read_options, device_mode, discovery_environment, resource_isolation
 from ha_activation import activation_status
 
 ROOT=Path(os.getenv('ACCESSPAGES_DATA_DIR','/data'))
 APP=Path(__file__).resolve().parent
-GATEWAY=APP/'guest_gateway'
-GROUP=2000
-USERS={'admin':1001,'guest':1002,'broker':1003,'tls':1004,'connector':1005}
+GATEWAY=APP/'guest_gateway' if (APP/'guest_gateway').is_dir() else APP.parent/'guest_gateway'
+sys.path.insert(0,str(GATEWAY))
+from page_workers import PageWorkers, directory, publish, POLICY_GROUP, GUEST_BROKER_GROUP, FRONTEND_GROUP
+from guest_frontend import nginx_config
+from pages import PageStore
+import route_reservations
+from resource_inventory import inventory as route_inventory
+
+GROUP=POLICY_GROUP
+USERS={'admin':1001,'broker':1003,'tls':1004,'connector':1005}
 # The installable NHP test app includes this immutable marker. Live-HA lab
 # fixtures omit it; injected credentials cannot switch the test app to live HA.
 DEMO_DATA=(APP/'demo-data').is_file()
@@ -72,27 +80,26 @@ class Runtime:
         self.device_mode=self.product['GATEWAY_DEVICE_DATA']
         ROOT.mkdir(exist_ok=True,mode=0o755);ROOT.chmod(0o755)
         for role,uid in USERS.items():
-            directory=ROOT/role;directory.mkdir(exist_ok=True,mode=0o700)
-            os.chown(directory,uid,GROUP)
+            role_dir=ROOT/role;role_dir.mkdir(exist_ok=True,mode=0o700)
+            role_dir.chmod(0o700)
+            os.chown(role_dir,uid,GROUP if role=='admin' else uid)
             # Authenticated restore extraction intentionally uses root/0600.
             # Repair only known role trees; reject unexpected symlinks.
-            for child in directory.rglob('*'):
+            for child in role_dir.rglob('*'):
                 if child.is_symlink():
-                    if role!='guest' or child!=directory/'pages' or child.resolve()!=ROOT/'admin/pages':
-                        raise ValueError('Unexpected runtime symlink')
-                    continue
-                os.chown(child,uid,GROUP)
+                    raise ValueError('Unexpected runtime symlink')
+                os.chown(child,uid,GROUP if role=='admin' else uid)
                 child.chmod(0o700 if child.is_dir() or child==ROOT/'connector/frpc' else 0o600)
         self.ha_ready, self.ha_reason = activation_status(ROOT, self.device_mode)
         (ROOT/'public').mkdir(exist_ok=True,mode=0o755)
         (ROOT/'public').chmod(0o755)
         self.installation=Installation(ROOT/'admin/installation',server_address=configured_server_address())
         self.lock=threading.RLock();self.children={};self.started={};self.stopping=False
+        self.page_workers=PageWorkers(ROOT,GATEWAY,self)
         self.csrf=secrets.token_urlsafe(32)
         self.message='Paste the enrollment API token to connect this Home Assistant.'
         self.admin_token=self.secret('admin-token')
         self.broker_admin=self.secret('broker-admin-token')
-        self.broker_unused=self.secret('broker-unused-token')
         self.connector_health_password=self.secret('connector-health-token')
         self.allowed_proxies=set(os.getenv('NHP_ADMIN_PROXY_IPS','172.30.32.2').split(','))
         self.last_connector_status=0;self.last_certificate=0;self.last_authority=0
@@ -104,23 +111,33 @@ class Runtime:
         if not path.exists():atomic(path,secrets.token_urlsafe(32))
         return path.read_text().strip()
 
-    def start(self,role,command,env):
+    def start(self,role,command,env,*,uid=None,groups=None):
         previous=self.children.get(role)
         if previous is not None and previous.poll() is None:return
+        if previous is not None:self.stop(role)
         # No Supervisor token, AWS credential, native key or Admin secret is
         # inherited by Guest/TLS/FRPC. Different UIDs protect /proc and files.
         base={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'PYTHONUNBUFFERED':'1',
-              'HOME':str(ROOT/role),'PYTHONPATH':str(GATEWAY)}
+              'HOME':env.get('GATEWAY_DATA_DIR',str(ROOT/role)),'PYTHONPATH':str(GATEWAY)}
         self.children[role]=subprocess.Popen(command,env={**base,**env},stdin=subprocess.DEVNULL,
-                                            user=USERS[role],group=GROUP,extra_groups=[])
+                                            user=uid if uid is not None else USERS[role],
+                                            group=uid if uid is not None else USERS[role],
+                                            extra_groups=groups if groups is not None else ([GROUP] if role in ('admin','broker') else [FRONTEND_GROUP] if role=='tls' else []),
+                                            start_new_session=True)
         self.started[role]=time.monotonic()
 
     def stop(self,role):
         child=self.children.pop(role,None)
-        if child and child.poll() is None:
-            child.terminate()
+        if child:
+            # Stop the process group too. The registry independently denies a
+            # retired UID, even if compromised code escaped its process group.
+            try:os.killpg(child.pid,signal.SIGTERM)
+            except ProcessLookupError:pass
             try:child.wait(5)
-            except subprocess.TimeoutExpired:child.kill();child.wait(5)
+            except subprocess.TimeoutExpired:pass
+            try:os.killpg(child.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+            child.wait(5)
 
     def enroll(self,link):
         with self.lock:
@@ -142,15 +159,18 @@ class Runtime:
             elif path.exists():shutil.rmtree(path)
         for path in (
             ROOT/'admin/page-capabilities.json',
-            ROOT/'broker/page-capabilities.json',
-            ROOT/'guest/page-capabilities.json',
-            ROOT/'guest/pages',
+            ROOT/'broker/page-workers.json',
+            ROOT/'broker/routes.json', ROOT/'admin/routes.json',
+            ROOT/'admin/ready-routes.json',
+            ROOT/'broker/guest-sessions.db',
+            ROOT/'workers',
         ):
             if path.is_symlink() or path.is_file():path.unlink(missing_ok=True)
             elif path.exists():shutil.rmtree(path)
+        self.page_workers.reset()
+        route_reservations.cancel(ROOT/'admin')
         for role in ('connector','tls'):
-            directory=ROOT/role;directory.mkdir(mode=0o700)
-            os.chown(directory,USERS[role],GROUP)
+            directory(ROOT/role,USERS[role],USERS[role],0o700)
         (ROOT/'public').mkdir(mode=0o755)
         self.installation=Installation(
             ROOT/'admin/installation',
@@ -162,11 +182,16 @@ class Runtime:
         request.unlink(missing_ok=True)
 
     def public_status(self):
-        ready=all(self.children.get(r) and self.children[r].poll() is None and time.monotonic()-self.started.get(r,0)>2 for r in USERS)
+        roles=[*(r for r in USERS if r!='connector' or getattr(self,'resources',[])),*('page:'+str(record['uid']) for record in self.page_workers.state['pages'].values())]
+        ready=not getattr(self,'routes_pending',False) and all(self.children.get(r) and self.children[r].poll() is None and time.monotonic()-self.started.get(r,0)>2 for r in roles)
         if ready:
             try:
-                for port in (8081,8082,8083,8444):
+                for port in (8081,8083,8444):
                     with socket.create_connection(('127.0.0.1',port),timeout=0.2):pass
+                for record in self.page_workers.state['pages'].values():
+                    with socket.socket(socket.AF_UNIX) as connection:
+                        connection.settimeout(0.2)
+                        connection.connect(str(self.page_workers.socket(record)))
             except OSError:ready=False
         if ready:ready=self.connector_ready()
         enrolled=(self.installation.root/'binding.json').exists()
@@ -192,13 +217,15 @@ class Runtime:
         return True
 
     def connector_ready(self):
+        expected={r['resource_id'] for r in getattr(self,'resources',[])}
+        if not expected:return True
         connection=http.client.HTTPConnection('127.0.0.1',8084,timeout=0.5)
         try:
             basic=base64.b64encode(('runtime:'+self.connector_health_password).encode()).decode()
             connection.request('GET','/api/status',headers={'Authorization':'Basic '+basic})
             response=connection.getresponse()
             value=json.loads(response.read(32768))
-            return response.status==200 and any(p.get('name')=='guest' and p.get('status')=='running' for p in value.get('tcp',[]))
+            return response.status==200 and expected=={p.get('name') for p in value.get('tcp',[]) if p.get('status')=='running'}
         except (OSError,ValueError,http.client.HTTPException):return False
         finally:connection.close()
 
@@ -218,7 +245,43 @@ class Runtime:
             self.installation.refresh_connector()
             binding=self.installation.recover_binding()
             self.last_connector_status=now
-        route=binding['route'];origin='https://'+route['host']+':'+str(route['port'])
+        source=PageStore(ROOT/'admin/pages',file_mode=0o640)
+        mode=resource_isolation(read_options(ROOT))
+        mode_path=ROOT/'resource-isolation.json'
+        previous=json.loads(mode_path.read_text()) if mode_path.exists() else 'page'
+        with source.authority_guard(write=True):
+            if previous!=mode:
+                self.stop('connector')
+                (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
+                for role in ('admin','broker'):
+                    publish(ROOT/role/'routes.json',json.dumps({'gateway_id':binding['gateway_id'],
+                        'epoch':binding['route']['epoch'],'isolation':mode,'resources':[]}),0,USERS[role])
+                # Revoke before persisting the new mode. Restart repeats any
+                # interrupted purge; no old invitation is carried across modes.
+                source.revoke_all_access_grants()
+                route_reservations.cancel(ROOT/'admin')
+                for path in source.directory.glob('*.json'):
+                    os.chown(path,USERS['admin'],GROUP)
+            if previous!=mode or not mode_path.exists():atomic(mode_path,json.dumps(mode))
+            inventory=route_inventory([source.load(p['id']) for p in source.list_pages()],mode,route_reservations.pending(ROOT/'admin'))
+        retry_after=5 if getattr(self,'routes_pending',False) else 45
+        self.routes_pending=False
+        if inventory!=getattr(self,'last_attempted_inventory',None) or now-getattr(self,'last_page_sync',0)>retry_after:
+            (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
+            self.phase='page routes'
+            self.last_page_sync=now
+            self.last_attempted_inventory=inventory
+            try:
+                self.installation.sync_page_routes(inventory)
+            except RuntimeError:
+                # Keep local Admin available while capacity/withdrawal is pending.
+                self.routes_pending=True
+            binding=self.installation.recover_binding()
+        route=binding['route']
+        current={(p['page_id'],p['instance_id'],p['guest_hash']) for p in inventory}
+        self.resources=[r for r in route.get('resources',[]) if (r['page_id'],r['instance_id'],r['guest_hash']) in current]
+        self.routes_pending=self.routes_pending or len(self.resources)!=len(inventory) or any(not r['dns_ready'] for r in self.resources)
+        manifest={'gateway_id':binding['gateway_id'],'epoch':route['epoch'],'isolation':mode,'resources':self.resources}
         if now-self.last_certificate>3600 or not (ROOT/'tls/guest.crt').exists():
             self.phase='customer certificate issuance'
             if not self.installation.ensure_certificate():
@@ -227,104 +290,89 @@ class Runtime:
             changed=not (ROOT/'tls/guest.crt').exists() or (ROOT/'tls/guest.crt').read_bytes()!=(self.installation.root/'guest.crt').read_bytes()
             for name in ('guest.crt','guest.key'):
                 atomic(ROOT/'tls'/name,(self.installation.root/name).read_text(),0o600)
-                os.chown(ROOT/'tls'/name,USERS['tls'],GROUP)
+                os.chown(ROOT/'tls'/name,USERS['tls'],USERS['tls'])
             if changed:self.stop('tls')
             self.last_certificate=now
-        for name,source in [('handoff-public-key','handoff-public-key'),('binding.json','binding.json')]:
-            atomic(ROOT/'public'/name,(self.installation.root/source).read_text(),0o644)
+        for role in ('admin','broker'):
+            publish(ROOT/role/'routes.json',json.dumps(manifest),0,USERS[role])
+        atomic(ROOT/'public/handoff-public-key',(self.installation.root/'handoff-public-key').read_text(),0o644)
+        atomic(ROOT/'public/binding.json',json.dumps({'gateway_id':binding['gateway_id'],'route':{'epoch':route['epoch']}}),0o644)
         pages=ROOT/'admin/pages';pages.mkdir(exist_ok=True,mode=0o750)
-        os.chown(pages,USERS['admin'],GROUP);pages.chmod(0o750)
+        os.chown(pages,USERS['admin'],GROUP);pages.chmod(0o2750)
         for page in pages.iterdir():
             if page.is_file():page.chmod(0o640)
-        guest_pages=ROOT/'guest/pages'
-        if not guest_pages.exists():guest_pages.symlink_to(pages)
-        # Only this directory is traversable by the Guest group; all Admin
-        # runtime and native identity directories remain owner-only.
+        # Only Admin and Broker can read grants; page workers receive projections.
         (ROOT/'admin').chmod(0o710)
-        for directory in self.installation.root.rglob('*'):
-            os.chown(directory,USERS['admin'],GROUP)
+        lock=pages/'.authority.lock'
+        if not lock.exists():atomic(lock,'',0o640)
+        os.chown(lock,USERS['admin'],GROUP)
+        for child in self.installation.root.rglob('*'):
+            os.chown(child,USERS['admin'],GROUP)
         os.chown(self.installation.root,USERS['admin'],GROUP)
-        capabilities_path=ROOT/'guest/page-capabilities.json'
-        capabilities=json.loads(capabilities_path.read_text()) if capabilities_path.exists() else {}
-        ids={p.stem for p in pages.glob('*.json')}
-        capabilities={page:capabilities.get(page,secrets.token_urlsafe(32)) for page in ids}
-        atomic(capabilities_path,json.dumps(capabilities));os.chown(capabilities_path,USERS['guest'],GROUP)
-        atomic(ROOT/'broker/page-capabilities.json',json.dumps({page:hashlib.sha256(value.encode()).hexdigest() for page,value in capabilities.items()}))
-        os.chown(ROOT/'broker/page-capabilities.json',USERS['broker'],GROUP)
-        # Admin owns activity and notification policy. Give it only capability
-        # hashes; the guest process uses its existing per-page credentials.
         admin_capabilities=ROOT/'admin/page-capabilities.json'
-        atomic(admin_capabilities,json.dumps({page:hashlib.sha256(value.encode()).hexdigest() for page,value in capabilities.items()}))
-        os.chown(admin_capabilities,USERS['admin'],GROUP)
         ca=os.getenv('NHP_SERVICE_CA_FILE')
         if ca:atomic(ROOT/'public/service-ca.crt',Path(ca).read_text(),0o644)
         product=self.product
         common={**product,'ACCESS_TRANSPORT':'nhp','NHP_INSTALLATION_ROUTING':'1',
-                'NHP_GATEWAY_ORIGIN':origin,'NHP_LANDING_ORIGIN':json.loads((self.installation.root/'profile.json').read_text())['landing_origin'],
+                'NHP_LANDING_ORIGIN':json.loads((self.installation.root/'profile.json').read_text())['landing_origin'],
                 'NHP_BINDING_FILE':str(ROOT/'public/binding.json'),
                 'NHP_VERIFY_KEY_FILE':str(ROOT/'public/handoff-public-key'),
                 'HOST':'127.0.0.1',
                 'PAGE_FILE_MODE':'640','HA_BROKER_URL':'http://127.0.0.1:8083'}
+        directory(ROOT/'guest-broker',USERS['broker'],GUEST_BROKER_GROUP,0o2710)
+        directory(ROOT/'handoff',USERS['broker'],FRONTEND_GROUP,0o2710)
+        workers=self.page_workers.reconcile(common,broker_uid=USERS['broker'],tls_uid=USERS['tls'],admin_uid=USERS['admin'],manifest=manifest)
+        guest_socket=str(ROOT/'guest-broker/http.sock')
         self.phase='Home Assistant connection'
         self.start('broker',['python3',str(GATEWAY/'ha_broker.py')],{
-            **product,'HA_BROKER_HOST':'127.0.0.1','HA_BROKER_PORT':'8083',
-            'HA_BROKER_TOKEN':self.broker_unused,'HA_BROKER_ADMIN_TOKEN':self.broker_admin,
+            **common,'NHP_ROUTES_FILE':str(ROOT/'broker/routes.json'),'HA_BROKER_HOST':'127.0.0.1','HA_BROKER_PORT':'8083',
+            'HA_BROKER_ADMIN_TOKEN':self.broker_admin,
+            'HA_GUEST_BROKER_SOCKET':guest_socket,
+            'HA_HANDOFF_SOCKET':str(ROOT/'handoff/http.sock'),'GATEWAY_FRONTEND_UID':str(USERS['tls']),
+            'HA_GUEST_SESSION_DB':str(ROOT/'broker/guest-sessions.db'),
             **broker_backend_environment(self.device_mode),'HA_BROKER_POLICY_DIR':str(pages),
-            'HA_PAGE_CAPABILITY_REGISTRY':str(ROOT/'broker/page-capabilities.json')})
+            'HA_PAGE_WORKER_REGISTRY':str(ROOT/'broker/page-workers.json')})
         self.start('admin',['python3',str(GATEWAY/'server.py')],{**common,
-            'GATEWAY_ROLE':'admin','GATEWAY_DATA_DIR':str(ROOT/'admin'),'PORT':'8081',
+            'NHP_READY_ROUTES_FILE':str(ROOT/'admin/ready-routes.json'),
+            'NHP_ROUTES_FILE':str(ROOT/'admin/routes.json'),'GATEWAY_ROLE':'admin','GATEWAY_DATA_DIR':str(ROOT/'admin'),'PORT':'8081',
             'ADMIN_TOKEN':self.admin_token,'HA_BROKER_TOKEN':self.broker_admin,
             'PAGE_CAPABILITY_REGISTRY_FILE':str(admin_capabilities),
             'MACHINE_DIR':str(self.installation.machine_dir)})
-        self.start('guest',['python3',str(GATEWAY/'server.py')],{**common,
-            'GATEWAY_ROLE':'guest','GATEWAY_DATA_DIR':str(ROOT/'guest'),'PORT':'8082',
-            'HA_BROKER_TOKEN':'page-scoped-capabilities-required',
-            'ACTIVITY_BROKER_URL':'http://127.0.0.1:8081',
-            'VERIFICATION_BROKER_URL':'http://127.0.0.1:8081',
-            'NHP_PAGE_CAPABILITIES_FILE':str(capabilities_path)})
-        config=f'''pid {ROOT}/tls/nginx.pid;
-error_log stderr warn;
-events {{ worker_connections 128; }}
-http {{
- server_names_hash_bucket_size 256;
- client_body_temp_path {ROOT}/tls/body;
- proxy_temp_path {ROOT}/tls/proxy;
- fastcgi_temp_path {ROOT}/tls/fastcgi;
- uwsgi_temp_path {ROOT}/tls/uwsgi;
- scgi_temp_path {ROOT}/tls/scgi;
- access_log off;
- server {{
-  listen 127.0.0.1:8444 ssl default_server;
-  ssl_reject_handshake on;
- }}
- server {{
-  listen 127.0.0.1:8444 ssl;
-  server_name {route['host']};
-  ssl_certificate {ROOT}/tls/guest.crt;
-  ssl_certificate_key {ROOT}/tls/guest.key;
-  ssl_protocols TLSv1.2 TLSv1.3;
-  client_max_body_size 32k;
-  location / {{ proxy_pass http://127.0.0.1:8082; proxy_set_header Host $http_host; }}
- }}
-}}
-'''
-        atomic(ROOT/'tls/nginx.conf',config);os.chown(ROOT/'tls/nginx.conf',USERS['tls'],GROUP)
+        config=nginx_config(ROOT,GATEWAY,route['host'],workers,self.resources)
+        configuration=ROOT/'tls/nginx.conf'
+        changed=not configuration.exists() or configuration.read_text()!=config
+        if changed:
+            (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
+            # Check before reloading; never leave a partially written routing table.
+            candidate=ROOT/'tls/nginx.next.conf'
+            publish(candidate,config,USERS['tls'],USERS['tls'],0o600)
+            subprocess.run(['nginx','-t','-e','stderr','-c',str(candidate)],
+                           check=True,user=USERS['tls'],group=USERS['tls'],extra_groups=[FRONTEND_GROUP],
+                           stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+            candidate.replace(configuration)
+            child=self.children.get('tls')
+            if child is not None and child.poll() is None:child.send_signal(signal.SIGHUP)
         self.start('tls',['nginx','-e','stderr','-c',str(ROOT/'tls/nginx.conf'),'-g','daemon off;'],{})
-        connector_config=self.installation.connector_config(self.connector_health_password).replace(str(self.installation.root/'frp-ca.crt'),str(ROOT/'connector/frp-ca.crt'))
+        if not self.resources:
+            self.stop('connector')
+            self.last_error=None
+            self.message='Waiting for page routes. Retrying automatically.' if self.routes_pending else 'Ready to create pages and test guest invitations.'
+            return True
+        connector_config=self.installation.connector_config(self.resources,self.connector_health_password).replace(str(self.installation.root/'frp-ca.crt'),str(ROOT/'connector/frp-ca.crt'))
         configuration=ROOT/'connector/frpc.toml'
         if not configuration.exists() or configuration.read_text()!=connector_config:self.stop('connector')
         for name,value in [('frpc.toml',connector_config),('frp-ca.crt',(self.installation.root/'frp-ca.crt').read_text())]:
-            atomic(ROOT/'connector'/name,value);os.chown(ROOT/'connector'/name,USERS['connector'],GROUP)
+            atomic(ROOT/'connector'/name,value);os.chown(ROOT/'connector'/name,USERS['connector'],USERS['connector'])
         # NHP-FRP starts its embedded scoped Agent beside its executable.
         for source in (self.installation.root/'connector-nhp/etc').glob('*.toml'):
             target=ROOT/'connector/etc'/source.name
-            atomic(target,source.read_text());os.chown(target,USERS['connector'],GROUP)
-        os.chown(ROOT/'connector/etc',USERS['connector'],GROUP)
+            atomic(target,source.read_text());os.chown(target,USERS['connector'],USERS['connector'])
+        os.chown(ROOT/'connector/etc',USERS['connector'],USERS['connector'])
         marker=ROOT/'connector/binary.sha256'
         if not marker.exists() or marker.read_text()!=self.frpc_digest:
             self.stop('connector')
             shutil.copyfile('/opt/frpc',ROOT/'connector/frpc.new')
-            os.chmod(ROOT/'connector/frpc.new',0o700);os.chown(ROOT/'connector/frpc.new',USERS['connector'],GROUP)
+            os.chmod(ROOT/'connector/frpc.new',0o700);os.chown(ROOT/'connector/frpc.new',USERS['connector'],USERS['connector'])
             (ROOT/'connector/frpc.new').replace(ROOT/'connector/frpc')
             atomic(marker,self.frpc_digest)
         child=self.children.get('connector')
@@ -335,8 +383,12 @@ http {{
         # Once FRPC is running, its embedded Agent owns this native identity.
         # Do not run a competing native Agent using the same key in parallel.
         self.start('connector',[str(ROOT/'connector/frpc'),'-c',str(ROOT/'connector/frpc.toml')],{})
+        ready=not changed and self.connector_ready() and all(self.children.get(r) and self.children[r].poll() is None for r in ('tls','broker'))
+        publish(ROOT/'admin/ready-routes.json',json.dumps({
+            'gateway_id':manifest['gateway_id'],'epoch':manifest['epoch'],'isolation':mode,
+            'checked_at':time.time(),'resources':[r['resource_id'] for r in self.resources if r['dns_ready']] if ready else []}),0,USERS['admin'])
         self.last_error=None
-        self.message='Ready to create pages and test guest invitations.'
+        self.message='Waiting for page routes. Retrying automatically.' if self.routes_pending else 'Ready to create pages and test guest invitations.'
         return True
 
     def loop(self):
@@ -348,6 +400,7 @@ http {{
                     try:self.prepare()
                     except Exception as error:
                         self.stop('connector')
+                        (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
                         self.message='Waiting for '+self.phase+'. Retrying automatically.'
                         signature=(self.phase,type(error).__name__)
                         if signature!=self.last_error:
@@ -394,7 +447,7 @@ class Ingress(BaseHTTPRequestHandler):
                 markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.server_address))
                 self.send(200,markup.encode(),'text/html; charset=utf-8');return
             target='/admin' if path=='/' else self.path
-            connection=http.client.HTTPConnection('127.0.0.1',8081,timeout=40)
+            connection=http.client.HTTPConnection('127.0.0.1',8081,timeout=130)
             try:
                 headers={'X-Admin-Token':runtime.admin_token,'Content-Type':self.headers.get('Content-Type','application/json')}
                 connection.request(self.command,target,body,headers)
