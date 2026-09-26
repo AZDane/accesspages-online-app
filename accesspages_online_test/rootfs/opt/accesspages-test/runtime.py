@@ -18,8 +18,7 @@ import time
 from urllib.parse import urlparse
 
 from installation import Installation, atomic
-from app_options import read_options, device_mode, discovery_environment, resource_isolation
-from ha_activation import activation_status
+from app_options import read_options, discovery_environment, resource_isolation
 
 ROOT=Path(os.getenv('ACCESSPAGES_DATA_DIR','/data'))
 APP=Path(__file__).resolve().parent
@@ -33,19 +32,12 @@ from resource_inventory import inventory as route_inventory
 
 GROUP=POLICY_GROUP
 USERS={'admin':1001,'broker':1003,'tls':1004,'connector':1005}
-# The installable NHP test app includes this immutable marker. Live-HA lab
-# fixtures omit it; injected credentials cannot switch the test app to live HA.
-DEMO_DATA=(APP/'demo-data').is_file()
-
-def configured_device_mode():
-    return device_mode(read_options(ROOT), demo_only=DEMO_DATA)
 
 
 def gateway_environment():
     version=(APP/'version').read_text().strip() if (APP/'version').is_file() else 'development'
     return {
         **discovery_environment(read_options(ROOT)),
-        'GATEWAY_DEVICE_DATA':configured_device_mode(),
         'GATEWAY_FEATURE_PROFILE':'sensors_lights' if (APP/'pilot-features').exists() else os.getenv('GATEWAY_FEATURE_PROFILE','full'),
         'GATEWAY_VERSION':version,
     }
@@ -62,9 +54,7 @@ def configured_server_address():
     return value.strip() if value else None
 
 
-def broker_backend_environment(mode=None):
-    if (mode or configured_device_mode()) != 'homeassistant':
-        raise RuntimeError('Home Assistant activation requires owner review')
+def broker_backend_environment():
     ha_token=os.getenv('HA_TOKEN') or os.getenv('SUPERVISOR_TOKEN')
     if os.getenv('HA_TOKEN_FILE'):
         ha_token=Path(os.environ['HA_TOKEN_FILE']).read_text().strip()
@@ -77,7 +67,6 @@ class Runtime:
     def __init__(self):
         os.umask(0o077)
         self.product=gateway_environment()
-        self.device_mode=self.product['GATEWAY_DEVICE_DATA']
         ROOT.mkdir(exist_ok=True,mode=0o755);ROOT.chmod(0o755)
         for role,uid in USERS.items():
             role_dir=ROOT/role;role_dir.mkdir(exist_ok=True,mode=0o700)
@@ -90,7 +79,6 @@ class Runtime:
                     raise ValueError('Unexpected runtime symlink')
                 os.chown(child,uid,GROUP if role=='admin' else uid)
                 child.chmod(0o700 if child.is_dir() or child==ROOT/'connector/frpc' else 0o600)
-        self.ha_ready, self.ha_reason = activation_status(ROOT, self.device_mode)
         (ROOT/'public').mkdir(exist_ok=True,mode=0o755)
         (ROOT/'public').chmod(0o755)
         self.installation=Installation(ROOT/'admin/installation',server_address=configured_server_address())
@@ -201,9 +189,7 @@ class Runtime:
         if enrolled and message.startswith('Waiting for ') and message.endswith('. Retrying automatically.'):
             message='We could not finish connecting yet. Retrying automatically; your enrollment is saved. If this continues, contact support.'
         return {'message':message,'enrolled':enrolled,
-                'ready':bool(ready),'admin_ready':self.admin_ready(),
-                'device_data':self.device_mode,
-                'migration_required':not self.ha_ready, 'migration_reason':self.ha_reason}
+                'ready':bool(ready),'admin_ready':self.admin_ready()}
 
     def admin_ready(self):
         # Owner controls must remain reachable through HA Ingress when the
@@ -230,9 +216,6 @@ class Runtime:
         finally:connection.close()
 
     def prepare(self):
-        if not self.ha_ready:
-            self.message=self.ha_reason
-            return False
         self.phase='installation status'
         now=time.monotonic()
         if now-self.last_authority>3600:
@@ -330,7 +313,7 @@ class Runtime:
             'HA_GUEST_BROKER_SOCKET':guest_socket,
             'HA_HANDOFF_SOCKET':str(ROOT/'handoff/http.sock'),'GATEWAY_FRONTEND_UID':str(USERS['tls']),
             'HA_GUEST_SESSION_DB':str(ROOT/'broker/guest-sessions.db'),
-            **broker_backend_environment(self.device_mode),'HA_BROKER_POLICY_DIR':str(pages),
+            **broker_backend_environment(),'HA_BROKER_POLICY_DIR':str(pages),
             'HA_PAGE_WORKER_REGISTRY':str(ROOT/'broker/page-workers.json')})
         self.start('admin',['python3',str(GATEWAY/'server.py')],{**common,
             'NHP_READY_ROUTES_FILE':str(ROOT/'admin/ready-routes.json'),
@@ -428,13 +411,6 @@ class Ingress(BaseHTTPRequestHandler):
             body=self.rfile.read(length) if length else b''
             path=urlparse(self.path).path
             if path=='/setup/status':self.send(200,runtime.public_status());return
-            if not runtime.ha_ready:
-                if self.command == 'GET' and not path.startswith('/api/'):
-                    markup=(APP/'migration.html').read_text().replace('MIGRATION_REASON',html.escape(runtime.ha_reason))
-                    self.send(200,markup.encode(),'text/html; charset=utf-8')
-                else:
-                    self.send(409,{'error':'Home Assistant activation requires owner review'})
-                return
             if path=='/setup/enroll' and self.command=='POST':
                 value=json.loads(body)
                 if not isinstance(value,dict) or set(value)!={'enrollment_token'}:raise ValueError()

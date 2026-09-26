@@ -2,9 +2,6 @@ configuration:
   server_address:
     name: NHP Server address
     description: Native OpenNHP Server address and UDP port. Must match the public bootstrap settings shipped with this beta app.
-  device_mode:
-    name: Device data
-    description: "review_required and legacy demo keep Home Assistant access blocked pending owner review. homeassistant enables selected real sensors, binary sensors and lights through the local broker after the activation checks pass. After saving, restart the app. Configure pages, guests, invitation email and owner alerts in Open Web UI."
   resource_isolation:
     name: Resource isolation
     description: "page (default) shares one site among guests on the same page. guest gives each invitation its own site. Every guest has a separate session in both modes. Changing this setting and restarting revokes all existing invitations; page settings are kept. Create new invitations afterward."

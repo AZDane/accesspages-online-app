@@ -2,14 +2,14 @@
 
 An experimental Home Assistant app for the controlled Access Pages beta. Each HA installation runs its own Guest Gateway and connects outbound to OpenNHP Service. One installation can serve multiple guest pages with separate grants and sessions.
 
-The app supports selected Home Assistant sensors, binary sensors and lights through the local broker. It defaults to `review_required`; an owner must explicitly select `homeassistant` before activation. The app requests Home Assistant API access, and only the local broker receives the HA credentials. There is no built-in fake-device backend. Native enrollment, NHP admission, NHP-FRP, TLS, signed handoffs and page authorization remain real.
+The app connects to Home Assistant and supports selected sensors, binary sensors and lights through the local broker. It requests Home Assistant API access, and only the local broker receives the HA credentials. Native enrollment, NHP admission, NHP-FRP, TLS, signed handoffs and page authorization protect guest access.
 
 ## Install on a dedicated HA test system
 
 1. In Home Assistant, open **Settings → Apps → App store → Repositories** (older versions call these add-ons).
 2. Add `https://github.com/AZDane/accesspages-online-app`.
 3. Install **Access Pages Online test**, start it, and choose **Open web UI**.
-4. Review [the activation and migration guidance](accesspages_online_test/DOCS.md), select `device_mode: homeassistant` in Configuration, and restart the app. Then open the app and paste the private, single-use enrollment API token supplied by the beta operator. The hosted beta must be running before enrollment can complete.
+4. Paste the private, single-use enrollment API token supplied by the beta operator. The hosted beta must be running before enrollment can complete. After connecting, select the entities and controls guests may use on each page. See [the app guide](accesspages_online_test/DOCS.md) for discovery filters and resource isolation.
 
 The initial installation builds pinned OpenNHP/NHP-FRP source and can take several minutes. Supported architectures are amd64 and aarch64. No router port forwarding or manually assembled keys, hostnames or tunnel credentials are required.
 

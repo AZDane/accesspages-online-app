@@ -33,9 +33,6 @@ def pending_runtime(root):
     instance.installation.recover_binding.return_value = {
         'gateway_id':'synthetic', 'route': {'host': 'gateway.example.test', 'epoch':1, 'resources':[]}}
     instance.installation.ensure_certificate.return_value = False
-    instance.ha_ready = True
-    instance.ha_reason = ''
-    instance.device_mode = 'homeassistant'
     instance.last_authority = instance.last_connector_status = time.monotonic()
     instance.last_certificate = 0
     instance.children = {}

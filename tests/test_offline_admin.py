@@ -1,5 +1,6 @@
 """Owner controls stay available through trusted Ingress during tunnel outages."""
 import io
+import json
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -49,6 +50,25 @@ class OfflineAdminTests(unittest.TestCase):
         with patch.object(runtime.http.client,'HTTPConnection') as connect:handler.handle_request()
         self.assertEqual(handler.sent[0][0],403);connect.assert_not_called()
 
+    def test_enrollment_requires_trusted_ingress_and_csrf(self):
+        for source, csrf, status in [('127.0.0.1', 'synthetic-csrf', 200),
+                                     ('127.0.0.1', '', 403),
+                                     ('192.0.2.50', 'synthetic-csrf', 403)]:
+            with self.subTest(source=source, csrf=csrf):
+                handler = self.handler('/setup/enroll', False)
+                body = json.dumps({'enrollment_token': 'synthetic-token'}).encode()
+                handler.command = 'POST'
+                handler.client_address = (source, 1234)
+                handler.headers = {'Content-Length': str(len(body)), 'X-Access-Pages-CSRF': csrf}
+                handler.rfile = io.BytesIO(body)
+                handler.runtime.enroll = Mock(return_value={'enrolled': True})
+                handler.handle_request()
+                self.assertEqual(handler.sent[0][0], status)
+                if status == 200:
+                    handler.runtime.enroll.assert_called_once_with('synthetic-token')
+                else:
+                    handler.runtime.enroll.assert_not_called()
+
     def test_enrolled_restart_does_not_ask_for_another_token(self):
         handler=self.handler('/',False)
         handler.runtime.public_status=lambda:{'ready':False,'enrolled':True}
@@ -68,7 +88,7 @@ class OfflineAdminTests(unittest.TestCase):
         handler.path=path;handler.command='GET';handler.headers={};handler.rfile=io.BytesIO()
         handler.client_address=('127.0.0.1',1234)
         handler.runtime=SimpleNamespace(allowed_proxies={'127.0.0.1'},csrf='synthetic-csrf',admin_token='synthetic-admin',
-            ha_ready=True,ha_reason="",admin_ready=lambda:ready,public_status=lambda:{'ready':False},installation=SimpleNamespace(server_address='nhp.example.test:62206'))
+            admin_ready=lambda:ready,public_status=lambda:{'ready':False},installation=SimpleNamespace(server_address='nhp.example.test:62206'))
         handler.sent=[];handler.send=lambda *args:handler.sent.append(args)
         return handler
 
