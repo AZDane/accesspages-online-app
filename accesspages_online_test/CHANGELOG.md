@@ -1,3 +1,8 @@
+## 0.1.0-beta.21
+
+- Allow the supervised runtime to preserve group inheritance on its private socket directories. This fixes guest API and handoff connections returning 502 under Home Assistant's AppArmor profile.
+- Retain separate page workers and the existing socket permissions. Update the existing app and restart; enrollment, page settings and the selected isolation mode are preserved.
+
 ## 0.1.0-beta.20
 
 - Coordinate this update with the matching OpenNHP Service deployment. Revoke all existing invitations before cutover, preserve page settings and app data, and create fresh invitations only after both components are ready. Old route and session schemas are not migrated; see the [update guide](DOCS.md#updating-to-resource-isolation).
