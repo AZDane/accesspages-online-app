@@ -6,8 +6,6 @@ sys.dont_write_bytecode=True
 import base64
 import hashlib
 import http.client
-import html
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -18,8 +16,8 @@ import socket
 import subprocess
 import threading
 import time
-from urllib.parse import urlparse
 
+from ingress_control import ControlServer, INGRESS_UID
 from installation import Installation, atomic
 from app_options import read_options, discovery_environment, resource_isolation
 
@@ -34,7 +32,7 @@ import route_reservations
 from resource_inventory import inventory as route_inventory
 
 GROUP=POLICY_GROUP
-USERS={'admin':1001,'broker':1003,'tls':1004,'connector':1005}
+USERS={'admin':1001,'broker':1003,'tls':1004,'connector':1005,'ingress':INGRESS_UID}
 
 
 def gateway_environment():
@@ -72,6 +70,7 @@ class Runtime:
         self.product=gateway_environment()
         ROOT.mkdir(exist_ok=True,mode=0o755);ROOT.chmod(0o755)
         for role,uid in USERS.items():
+            if role=='ingress':continue  # Its control directory stays root-owned.
             role_dir=ROOT/role;role_dir.mkdir(exist_ok=True,mode=0o700)
             role_dir.chmod(0o700)
             os.chown(role_dir,uid,GROUP if role=='admin' else uid)
@@ -87,12 +86,10 @@ class Runtime:
         self.installation=Installation(ROOT/'admin/installation',server_address=configured_server_address())
         self.lock=threading.RLock();self.children={};self.started={};self.stopping=False
         self.page_workers=PageWorkers(ROOT,GATEWAY,self)
-        self.csrf=secrets.token_urlsafe(32)
         self.message='Paste the enrollment API token to connect this Home Assistant.'
         self.admin_token=self.secret('admin-token')
         self.broker_admin=self.secret('broker-admin-token')
         self.connector_health_password=self.secret('connector-health-token')
-        self.allowed_proxies=set(os.getenv('NHP_ADMIN_PROXY_IPS','172.30.32.2').split(','))
         self.last_connector_status=0;self.last_certificate=0;self.last_authority=0
         self.phase='installation status';self.last_error=None
         self.frpc_digest=hashlib.sha256(Path('/opt/frpc').read_bytes()).hexdigest()
@@ -118,6 +115,13 @@ class Runtime:
                                             start_new_session=True)
         self.started[role]=time.monotonic()
 
+    def start_ingress(self):
+        self.start('ingress',['python3',str(APP/'ingress.py')],{
+            'ADMIN_TOKEN':self.admin_token,
+            'INGRESS_CONTROL_SOCKET':str(ROOT/'ingress/control.sock'),
+            'NHP_SERVER_ADDRESS':self.installation.server_address,
+            'NHP_ADMIN_PROXY_IPS':os.getenv('NHP_ADMIN_PROXY_IPS','172.30.32.2')})
+
     def stop(self,role):
         child=self.children.pop(role,None)
         if child:
@@ -140,7 +144,8 @@ class Runtime:
     def reset_service_connection(self):
         """Remove local service identities while preserving owner configuration."""
         request=ROOT/'admin/reset-connection.request'
-        for role in list(self.children):self.stop(role)
+        for role in list(self.children):
+            if role!='ingress':self.stop(role)
         for path in (
             self.installation.root,
             ROOT/'connector',
@@ -380,6 +385,7 @@ class Runtime:
 
     def loop(self):
         while not self.stopping:
+            self.start_ingress()
             with self.lock:
                 if (ROOT/'admin/reset-connection.request').exists():
                     self.reset_service_connection()
@@ -396,57 +402,9 @@ class Runtime:
             time.sleep(2)
 
 
-class Ingress(BaseHTTPRequestHandler):
-    runtime=None
-    def log_message(self,*_args):pass
-    def send(self,status,body,content_type='application/json'):
-        if not isinstance(body,bytes):body=json.dumps(body).encode()
-        self.send_response(status);self.send_header('Content-Type',content_type)
-        self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','no-store')
-        self.send_header('X-Content-Type-Options','nosniff');self.send_header('Referrer-Policy','no-referrer')
-        self.end_headers();self.wfile.write(body)
-    def handle_request(self):
-        runtime=self.runtime
-        if self.client_address[0] not in runtime.allowed_proxies:self.send(403,{'error':'Use Home Assistant Ingress'});return
-        if self.command not in ('GET','HEAD') and self.headers.get('X-Access-Pages-CSRF')!=runtime.csrf:self.send(403,{'error':'Reload the local app'});return
-        try:
-            length=int(self.headers.get('Content-Length','0'))
-            if not 0<=length<=512000:raise ValueError()
-            body=self.rfile.read(length) if length else b''
-            path=urlparse(self.path).path
-            if path=='/setup/status':self.send(200,runtime.public_status());return
-            if path=='/setup/enroll' and self.command=='POST':
-                value=json.loads(body)
-                if not isinstance(value,dict) or set(value)!={'enrollment_token'}:raise ValueError()
-                self.send(200,runtime.enroll(value['enrollment_token']));return
-            if self.command=='GET' and not runtime.admin_ready():
-                if path.startswith('/api/'):
-                    self.send(503,{'error':'Application is starting'});return
-                if runtime.public_status().get('enrolled'):
-                    self.send(200,(APP/'waiting.html').read_bytes(),'text/html; charset=utf-8');return
-                markup=(APP/'setup.html').read_text().replace('SETUP_CSRF',runtime.csrf).replace('SERVICE_ADDRESS',html.escape(runtime.installation.server_address))
-                self.send(200,markup.encode(),'text/html; charset=utf-8');return
-            target='/admin' if path=='/' else self.path
-            connection=http.client.HTTPConnection('127.0.0.1',8081,timeout=130)
-            try:
-                headers={'X-Admin-Token':runtime.admin_token,'Content-Type':self.headers.get('Content-Type','application/json')}
-                connection.request(self.command,target,body,headers)
-                response=connection.getresponse();payload=response.read(2*1024*1024)
-                kind=response.getheader('Content-Type','application/json')
-                if 'text/html' in kind:
-                    payload=payload.replace(b'</head>',f'<meta name="access-pages-csrf" content="{runtime.csrf}"></head>'.encode())
-                self.send(response.status,payload,kind)
-            finally:connection.close()
-        except Exception:self.send(400,{'error':'Operation failed. Check the enrollment token and service connection.'})
-    do_GET=handle_request
-    do_POST=handle_request
-    do_PUT=handle_request
-    do_DELETE=handle_request
-
-
 def main():
-    runtime=Runtime();Ingress.runtime=runtime
-    server=ThreadingHTTPServer(('0.0.0.0',8099),Ingress);server.daemon_threads=True
+    runtime=Runtime()
+    server=ControlServer(ROOT/'ingress/control.sock',runtime)
     threading.Thread(target=runtime.loop,daemon=True).start()
     def stop(*_args):
         runtime.stopping=True
@@ -456,6 +414,7 @@ def main():
     finally:
         runtime.stopping=True
         for role in list(runtime.children):runtime.stop(role)
+        server.server_close()
 
 
 if __name__=='__main__':main()

@@ -1,3 +1,9 @@
+## 0.1.0-beta.23
+
+- Run the Home Assistant Ingress and setup interface in a separate unprivileged process.
+- Add rate-limited capacity warnings to help diagnose busy connections and size limits without logging request contents or credentials.
+- Preserve existing enrollment, pages and guest authorization when updating from beta.22. Keep protection mode enabled and reload open Admin tabs after updating.
+
 ## 0.1.0-beta.22
 
 - Tighten the shared AppArmor profile to the application's required executables, files and data stores. Keep application code read-only and disable Python bytecode writes during normal startup.
