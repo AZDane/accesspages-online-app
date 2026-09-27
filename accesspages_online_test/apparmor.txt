@@ -40,6 +40,8 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   /data/workers/[2-5][0-9][0-9][0-9][0-9]/{,**} rwk,
   /data/{guest-broker,handoff}/ rw,
   /data/{guest-broker,handoff}/http.sock rw,
+  /data/ingress/ rw,
+  /data/ingress/control.sock rw,
   # The native connector locates its mutable agent state beside its executable.
   # Runtime verifies and copies the packaged binary to this one execution path.
   /data/connector/frpc rix,

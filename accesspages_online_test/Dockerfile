@@ -27,14 +27,14 @@ RUN cd /build/frp \
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.22
+ARG BUILD_VERSION=0.1.0-beta.23
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online test" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
 RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \
     && addgroup -g 2000 access-pages \
     && addgroup -g 2001 access-workers \
     && addgroup -g 2002 access-frontend \
-    && for entry in admin:1001 broker:1003 tls:1004 connector:1005; do \
+    && for entry in admin:1001 broker:1003 tls:1004 connector:1005 ingress:1006; do \
          addgroup -g "${entry#*:}" "access-${entry%:*}" \
          && adduser -D -H -u "${entry#*:}" -G "access-${entry%:*}" "access-${entry%:*}" || exit 1; \
        done

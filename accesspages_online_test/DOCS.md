@@ -21,6 +21,16 @@ After changing this setting, save and restart the app. **Changing modes revokes 
 
 The current beta has a shared capacity of eight active resources across installations. Page mode uses one per page; guest mode uses one per invitation. Creating a guest invitation can take longer while its site becomes ready. Creating or retiring resources can briefly interrupt other guests while the installation tunnel reconnects. Capacity exhaustion does not fall back to a shared resource.
 
+## Updating to beta.23
+
+When updating from beta.22, back up the app, install the update and keep protection
+mode enabled. Enrollment, pages, the selected isolation mode and guest authorization
+are preserved. No connection reset or service cutover is required. Reload open
+Admin tabs after updating, then check Admin, guest controls and revocation.
+
+The app logs a brief warning if a connection or size limit is reached. These
+warnings contain a limit and event count, without request contents or credentials.
+
 ## Updating to beta.22
 
 When updating from beta.21, back up the app and install the update with protection

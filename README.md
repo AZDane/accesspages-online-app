@@ -13,7 +13,7 @@ The app connects to Home Assistant and supports selected sensors, binary sensors
 
 The initial installation builds pinned OpenNHP/NHP-FRP source and can take several minutes. Supported architectures are amd64 and aarch64. No router port forwarding or manually assembled keys, hostnames or tunnel credentials are required.
 
-The app retains its own Gateway identity, separate connector identity, and TLS private key. Admin, device broker, customer TLS, outbound connector and each page's guest worker use separate local identities. The broker issues guest sessions and checks current authorization on every protected request. Pages and permitted sensor/light actions are configured through Home Assistant Ingress.
+The app retains its own Gateway identity, separate connector identity, and TLS private key. Ingress, Admin, device broker, customer TLS, outbound connector and each page's guest worker use separate local identities. The broker issues guest sessions and checks current authorization on every protected request. Pages and permitted sensor/light actions are configured through Home Assistant Ingress.
 
 **Resource isolation** defaults to `page`: guests on one page share a site, with separate guest sessions. Select `guest` for a separate site per invitation. Both modes keep separate workers for each page. Changing modes and restarting revokes all invitations while keeping page settings. See [resource isolation](accesspages_online_test/DOCS.md#resource-isolation) before changing this option.
 
@@ -23,10 +23,10 @@ See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages
 
 ## Updating
 
-For beta.22 from beta.21, back up the app, install the update and keep protection
+For beta.23 from beta.22, back up the app, install the update and keep protection
 mode enabled. Enrollment, pages and the selected isolation mode are preserved;
 no service cutover or guest-state migration is required. See
-[the update guide](accesspages_online_test/DOCS.md#updating-to-beta22).
+[the update guide](accesspages_online_test/DOCS.md#updating-to-beta23).
 
 Upgrading from before beta.20 requires a coordinated operator cutover of OpenNHP Service
 and the app. It is not an automatic upgrade of existing route or session state.

@@ -75,7 +75,8 @@ class AppOptionsTests(unittest.TestCase):
                 patch.object(instance, "stop") as stop,
             ):
                 instance.reset_service_connection()
-            self.assertEqual(stop.call_count, len(runtime.USERS))
+            self.assertEqual({call.args[0] for call in stop.call_args_list}, set(runtime.USERS) - {'ingress'})
+            self.assertEqual(stop.call_count, len(runtime.USERS) - 1)
             for path, value in preserved.items():
                 self.assertEqual(path.read_text(), value)
             for path in removed:
