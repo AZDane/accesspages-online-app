@@ -1,4 +1,4 @@
-// Offline browser regression for a long first-certificate wait and saved enrollment.
+// Offline browser regression for enrollment progress and local Admin readiness.
 const {chromium, webkit} = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -33,12 +33,12 @@ with tempfile.TemporaryDirectory() as d:
   let checks = 0;
   const check = (value, expected, description) => { assert.deepEqual(value, expected, description); checks++; };
   try {
-    for (const savedEnrollment of [false, true]) {
+    for (const [savedEnrollment, transportReady] of [[false, false], [false, true], [true, false], [true, true]]) {
       const context = await browser.newContext({serviceWorkers: 'block', viewport: mobile ? {width: 390, height: 844} : {width: 1280, height: 900}});
       const page = await context.newPage();
       await page.clock.install();
       await page.clock.pauseAt(new Date());
-      let enrolled = savedEnrollment, ready = false, unavailable = false, reject = !savedEnrollment;
+      let enrolled = savedEnrollment, ready = false, adminReady = false, unavailable = false, reject = !savedEnrollment;
       let reported = savedEnrollment ? fixtures.reconnecting : pending;
       let releaseEnrollment;
       const enrollmentAccepted = new Promise(resolve => { releaseEnrollment = resolve; });
@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as d:
         assert.equal(url.origin, 'https://ha.example.test');
         if (url.pathname === '/') {
           loaded++;
-          const body = ready ? '<h1>Admin ready</h1>' : fs.readFileSync(path.join(app, savedEnrollment ? 'waiting.html' : 'setup.html'), 'utf8').replaceAll('SETUP_CSRF', 'synthetic-csrf').replaceAll('SERVICE_ADDRESS', 'nhp.example.test:62206');
+          const body = adminReady ? '<h1>Admin ready</h1>' : fs.readFileSync(path.join(app, savedEnrollment ? 'waiting.html' : 'setup.html'), 'utf8').replaceAll('SETUP_CSRF', 'synthetic-csrf').replaceAll('SERVICE_ADDRESS', 'nhp.example.test:62206');
           return route.fulfill({contentType: 'text/html', body});
         }
         if (url.pathname === '/setup/enroll') {
@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory() as d:
           polls++;
           if (unavailable === 'network') return route.abort();
           if (unavailable === 'http') return route.fulfill({status: 503, contentType: 'application/json', body: '{}'});
-          return route.fulfill({contentType: 'application/json', body: JSON.stringify({...reported, enrolled, ready, admin_ready: ready})});
+          return route.fulfill({contentType: 'application/json', body: JSON.stringify({...reported, enrolled, ready, admin_ready: adminReady})});
         }
         unexpected++;
         return route.abort();
@@ -133,12 +133,16 @@ with tempfile.TemporaryDirectory() as d:
       await status.filter({hasText: 'Setting up your secure connection'}).waitFor();
       if (process.env.UI_EVIDENCE_DIR) {
         fs.mkdirSync(process.env.UI_EVIDENCE_DIR, {recursive: true});
-        await page.screenshot({path: path.join(process.env.UI_EVIDENCE_DIR, `${isWebKit ? 'webkit' : 'chromium'}-${mobile ? 'mobile' : 'desktop'}-${savedEnrollment ? 'saved' : 'new'}.png`), fullPage: true});
+        await page.screenshot({path: path.join(process.env.UI_EVIDENCE_DIR, `${isWebKit ? 'webkit' : 'chromium'}-${mobile ? 'mobile' : 'desktop'}-${savedEnrollment ? 'saved' : 'new'}-${transportReady ? 'all-ready' : 'admin-only'}.png`), fullPage: true});
       }
-      ready = true;
+      ready = transportReady;
+      adminReady = true;
       await page.clock.runFor(3000);
-      await page.getByRole('heading', {name: 'Admin ready'}).waitFor();
-      check(loaded, 2, 'Successful readiness advances automatically');
+      await page.getByRole('heading', {name: 'Admin ready'}).waitFor({timeout: 5000});
+      check(loaded, 2, 'Local Admin readiness advances automatically, regardless of transport readiness');
+      await page.clock.runFor(6000);
+      check(loaded, 2, 'Admin stays open without a reload loop');
+      check(posts, savedEnrollment ? 0 : 2, 'Opening Admin never repeats enrollment');
       check(unexpected, 0, 'Only existing local enrollment/status endpoints used');
       check(errors, [], 'No browser errors');
       await context.close();

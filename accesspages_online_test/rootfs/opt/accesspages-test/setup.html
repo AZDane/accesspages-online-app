@@ -45,7 +45,7 @@ setInterval(async()=>{
     if(!response.ok){if(enrolled)showProgress('Unable to check progress right now. Retrying automatically; your enrollment is saved.');return;}
     const state=await response.json();
     if(state.enrolled){enrolled=true;showProgress(state.message);}
-    if(state.ready)location.reload();
+    if(state.admin_ready)location.reload();
   }catch{
     if(enrolled)showProgress('Unable to check progress right now. Retrying automatically; your enrollment is saved.');
   }

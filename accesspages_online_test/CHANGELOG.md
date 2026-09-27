@@ -3,6 +3,8 @@
 - Tighten the shared AppArmor profile to the application's required executables, files and data stores. Keep application code read-only and disable Python bytecode writes during normal startup.
 - Preserve enrollment, page settings and the selected resource-isolation mode during the normal update. Keep protection mode enabled; no OpenNHP Service cutover or guest-state migration is required for this update from beta.21.
 - This update narrows file and executable access. It does not add separate network restrictions for guest workers.
+- Continue automatically from enrollment to Admin when local administration is ready, including while the service connection is still preparing.
+- Remove the outdated ten-minute connection wording from the page-save confirmation.
 
 ## 0.1.0-beta.21
 
