@@ -21,6 +21,7 @@ class HACredentialsTests(unittest.TestCase):
                 with patch.object(runtime.subprocess, 'Popen', return_value=Mock()) as spawn:
                     instance.start(role, ['synthetic'], broker if role == 'broker' else runtime.gateway_environment(), **identity)
                 env = spawn.call_args.kwargs['env']
+                self.assertEqual(env['PYTHONDONTWRITEBYTECODE'], '1')
                 self.assertNotIn('SUPERVISOR_TOKEN', env)
                 self.assertEqual('HA_TOKEN' in env, role == 'broker')
                 uid = identity.get('uid', runtime.USERS.get(role))

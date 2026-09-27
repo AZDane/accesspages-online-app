@@ -1,4 +1,8 @@
 """Standalone HA beta app: local Admin, isolated Guest, native NHP and FRPC."""
+import sys
+# Application code is immutable under the container's AppArmor policy.
+sys.dont_write_bytecode=True
+
 import base64
 import hashlib
 import http.client
@@ -12,7 +16,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import sys
 import threading
 import time
 from urllib.parse import urlparse
@@ -106,6 +109,7 @@ class Runtime:
         # No Supervisor token, AWS credential, native key or Admin secret is
         # inherited by Guest/TLS/FRPC. Different UIDs protect /proc and files.
         base={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'PYTHONUNBUFFERED':'1',
+              'PYTHONDONTWRITEBYTECODE':'1',
               'HOME':env.get('GATEWAY_DATA_DIR',str(ROOT/role)),'PYTHONPATH':str(GATEWAY)}
         self.children[role]=subprocess.Popen(command,env={**base,**env},stdin=subprocess.DEVNULL,
                                             user=uid if uid is not None else USERS[role],

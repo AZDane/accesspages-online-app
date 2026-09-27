@@ -1,3 +1,9 @@
+## 0.1.0-beta.22
+
+- Tighten the shared AppArmor profile to the application's required executables, files and data stores. Keep application code read-only and disable Python bytecode writes during normal startup.
+- Preserve enrollment, page settings and the selected resource-isolation mode during the normal update. Keep protection mode enabled; no OpenNHP Service cutover or guest-state migration is required for this update from beta.21.
+- This update narrows file and executable access. It does not add separate network restrictions for guest workers.
+
 ## 0.1.0-beta.21
 
 - Allow the supervised runtime to preserve group inheritance on its private socket directories. This fixes guest API and handoff connections returning 502 under Home Assistant's AppArmor profile.

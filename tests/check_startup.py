@@ -43,7 +43,8 @@ def check_startup(image, name, *, apparmor=False):
             reply = docker('exec', ident, 'python3', '-c', probe, check=False)
             if reply.returncode == 0 and reply.stdout.strip() == 'setup-ready':
                 if apparmor:
-                    label = docker('exec', ident, 'cat', '/proc/self/attr/current').stdout.strip()
+                    label = docker('exec', ident, 'python3', '-B', '-c',
+                                   "print(open('/proc/self/attr/current').read().strip())").stdout.strip()
                     assert label == 'accesspages_online_test (enforce)', label
                     result['apparmor_enforced'] = True
                     boundary = (

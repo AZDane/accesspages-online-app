@@ -1,47 +1,89 @@
 #include <tunables/global>
 
+# Shared container policy. Per-page UIDs and broker peer checks still enforce
+# internal authority; this policy does not provide per-role network isolation.
 profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
-  #include <abstractions/base>
-  #include <abstractions/nameservice>
+  # Enumerate the Alpine runtime instead of importing host abstractions that
+  # can also grant executable, service-socket or netlink access.
+  /opt/accesspages-test/{,**} r,
+  /opt/machinectl rix,
+  /opt/frpc r,
+  /usr/bin/python3 rix,
+  /usr/bin/python3.[0-9]* rix,
+  /usr/bin/openssl rix,
+  /usr/sbin/nginx rix,
+  /sbin/tini rix,
+  /{usr/,}lib/{,**} mr,
 
+  # Resolver, identity, TLS and timezone files used by Python, Go and Nginx.
+  /etc/{hosts,hostname,resolv.conf,nsswitch.conf,passwd,group} r,
+  /etc/{host.conf,gai.conf,protocols,services,localtime} r,
+  /etc/ld-musl-*.path r,
+  /etc/machine-id r,
+  /var/lib/dbus/machine-id r,
+  /etc/nginx/mime.types r,
+  /etc/ssl/openssl.cnf r,
+  /etc/ssl/cert.pem r,
+  /etc/ssl/certs/{,**} r,
+  /usr/share/{zoneinfo,ca-certificates}/{,**} r,
+
+  # The supervisor creates known top-level stores. This directory rule does
+  # not grant access to arbitrary descendants or to unlisted top-level files.
+  /data/ rw,
+  /data/options.json r,
+  /data/{admin-token,broker-admin-token,connector-health-token}{,.pending} rwk,
+  /data/{page-workers,resource-isolation}.json{,.pending} rwk,
+  # These role stores include SQLite sidecars, atomic writes, native identity
+  # and log files, certificates, Nginx temporary files and public projections.
+  /data/{admin,broker,connector,tls,public}/{,**} rwk,
+  /data/workers/ rw,
+  /data/workers/[2-5][0-9][0-9][0-9][0-9]/{,**} rwk,
+  /data/{guest-broker,handoff}/ rw,
+  /data/{guest-broker,handoff}/http.sock rw,
+  # The native connector locates its mutable agent state beside its executable.
+  # Runtime verifies and copies the packaged binary to this one execution path.
+  /data/connector/frpc rix,
+
+  # SQLite and Python temporary files remain shared-profile writable, without
+  # executable permission. Per-role temporary storage is a later boundary.
+  /tmp/{,**} rwk,
+  /dev/null rw,
+  /dev/zero rw,
+  /dev/{random,urandom} r,
+  /dev/{stdout,stderr} w,
+
+  # Runtime resource sizing and own-process metadata, not arbitrary /proc data.
+  @{PROC}/{meminfo,stat,cpuinfo,filesystems} r,
+  @{PROC}/sys/kernel/{version,ngroups_max,cap_last_cap} r,
+  @{PROC}/sys/vm/overcommit_memory r,
+  owner @{PROC}/@{pid}/{stat,status,maps,auxv,mountinfo,cgroup} r,
+  owner @{PROC}/@{pid}/attr/{current,apparmor/current} r,
+  # Python enumerates inherited descriptor numbers while dropping child UIDs.
+  # The process directory may still be root-owned at that point. Permit listing
+  # only; descriptor targets remain unlisted, and procfs checks caller identity.
+  @{PROC}/@{pid}/fd/ r,
+  /sys/devices/system/cpu/{,online,possible} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+  /sys/kernel/mm/hugepages/ r,
+  /sys/fs/cgroup/{,**} r,
+
+  # HA, native admission, hosted transport, configured mail and local IPC.
+  # TCP/UDP family permissions are not a destination allowlist.
   network inet stream,
-  network inet dgram,
   network inet6 stream,
+  network inet dgram,
   network inet6 dgram,
+  network unix stream,
+
+  # Root supervises fixed children with distinct unprivileged UIDs/GIDs.
   capability setuid,
   capability setgid,
   capability chown,
   capability fowner,
-  # Preserve the setgid bit on runtime directories owned by isolated groups.
+  # Required to preserve group inheritance on private socket directories.
   capability fsetid,
   capability dac_override,
   capability kill,
   signal (receive),
   signal (send) peer=*accesspages_online_test,
-
-  # Python lists the package directory before loading sibling modules.
-  /opt/accesspages-test/ r,
-  /opt/accesspages-test/** rix,
-  /opt/machinectl rix,
-  /opt/frpc rix,
-  /usr/bin/python3* rix,
-  /usr/bin/openssl rix,
-  /usr/sbin/nginx rix,
-  /sbin/tini rix,
-  /bin/** rix,
-  /usr/lib/** mr,
-  /lib/** mr,
-  /etc/** r,
-  /run/** rwk,
-  /tmp/** rwk,
-  /data/ rw,
-  /data/** rwk,
-  /data/connector/frpc rix,
-  /proc/** r,
-  /sys/devices/system/cpu/** r,
-  /sys/fs/cgroup/** r,
-  /dev/null rw,
-  /dev/stdout w,
-  /dev/stderr w,
-  /dev/urandom r,
 }
