@@ -21,6 +21,20 @@ After changing this setting, save and restart the app. **Changing modes revokes 
 
 The current beta has a shared capacity of eight active resources across installations. Page mode uses one per page; guest mode uses one per invitation. Creating a guest invitation can take longer while its site becomes ready. Creating or retiring resources can briefly interrupt other guests while the installation tunnel reconnects. Capacity exhaustion does not fall back to a shared resource.
 
+## Updating to beta.22
+
+When updating from beta.21, back up the app and install the update with protection
+mode enabled. The tighter AppArmor profile takes effect when the updated app
+starts. Enrollment, page settings and the selected isolation mode are preserved.
+No OpenNHP Service cutover, guest-state migration or connection reset is required.
+
+Check Admin, guest controls and revocation after updating. If the app cannot start
+or a normal operation fails, retain the logs and use the previous reviewed app
+backup for recovery; do not disable protection mode to work around the failure.
+
+The profile restricts file access and executable paths. Guest workers still have
+TCP/UDP permissions; separate worker network confinement is a later change.
+
 ## Updating to resource isolation
 
 Coordinate this source update with the matching OpenNHP Service deployment. The operator must revoke existing invitations and replace old route/session state during cutover, preserving page settings and app data. This package does not migrate old route or session schemas. Create new invitations only after the updated service and app are ready; old invitations and browser sessions are not retained. Do not reset the connection or edit stored state as an upgrade procedure.

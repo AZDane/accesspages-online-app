@@ -23,7 +23,12 @@ See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages
 
 ## Updating
 
-This source update requires a coordinated operator cutover of OpenNHP Service
+For beta.22 from beta.21, back up the app, install the update and keep protection
+mode enabled. Enrollment, pages and the selected isolation mode are preserved;
+no service cutover or guest-state migration is required. See
+[the update guide](accesspages_online_test/DOCS.md#updating-to-beta22).
+
+Upgrading from before beta.20 requires a coordinated operator cutover of OpenNHP Service
 and the app. It is not an automatic upgrade of existing route or session state.
 Revoke all existing invitations before cutover, preserve page settings and app
 data, and create fresh invitations after the matching service and app are ready.

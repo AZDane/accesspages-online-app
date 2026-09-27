@@ -2384,11 +2384,7 @@ async function savePage() {
 
     await loadPages();
     prepareEditor(data, true);
-    setStatus(
-      "Saved. Preparing the page Connector; first-time setup may take a moment. " +
-      "It will remain warm for 10 minutes while waiting for a guest.",
-      "success",
-    );
+    setStatus("Page saved.", "success");
   } catch (error) {
     setStatus(`Error: ${error.message}`, "error");
   } finally {
