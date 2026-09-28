@@ -21,6 +21,24 @@ After changing this setting, save and restart the app. **Changing modes revokes 
 
 The current beta has a shared capacity of eight active resources across installations. Page mode uses one per page; guest mode uses one per invitation. Creating a guest invitation can take longer while its site becomes ready. Creating or retiring resources can briefly interrupt other guests while the installation tunnel reconnects. Capacity exhaustion does not fall back to a shared resource.
 
+## Updating to beta.25
+
+When updating from beta.24, back up the app and install the update on the dedicated
+HA test installation. Enrollment, pages, the selected isolation mode and guest
+authorization are preserved. No connection reset or OpenNHP Service update is
+required. Reload open Admin and guest tabs after updating.
+
+Guest pages now share a Home Assistant state subscription for the entities needed
+by active guests. The app stops the subscription after a short period without guest
+activity. Normal browser polling and validation of each control operation remain
+in place. This requires Home Assistant 2022.4 or later.
+
+Check that two invited guests receive current demo states and can operate their
+permitted controls, with activity recorded for each guest. Revoke one guest and
+confirm the other continues, then restart the app and repeat those checks.
+The bundled AppArmor profile is unchanged. Supervisor applies it automatically;
+there is no selectable Protection mode toggle for this app.
+
 ## Updating to beta.24
 
 When updating from beta.23, back up the app and install the update on the dedicated

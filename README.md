@@ -23,11 +23,11 @@ See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages
 
 ## Updating
 
-For beta.24 from beta.23, back up the app and install the update.
+For beta.25 from beta.24, back up the app and install the update.
 Supervisor applies the bundled AppArmor profile automatically; this app has no
 selectable Protection mode toggle. Enrollment, pages and the selected isolation mode are preserved;
 no service cutover or guest-state migration is required. See
-[the update guide](accesspages_online_test/DOCS.md#updating-to-beta24).
+[the update guide](accesspages_online_test/DOCS.md#updating-to-beta25).
 
 Upgrading from before beta.20 requires a coordinated operator cutover of OpenNHP Service
 and the app. It is not an automatic upgrade of existing route or session state.

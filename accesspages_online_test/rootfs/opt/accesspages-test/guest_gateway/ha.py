@@ -774,6 +774,14 @@ class HomeAssistantClient:
         return result
 
 
+class StateSnapshot(list):
+    """States accompanied by the broker's actual HA snapshot receipt time."""
+
+    def __init__(self, states, observed_at):
+        super().__init__(states)
+        self.observed_at = observed_at
+
+
 class BrokerHomeAssistantClient(HomeAssistantClient):
     """Credential-free client for the policy-enforcing HA broker."""
 
@@ -903,6 +911,17 @@ class BrokerHomeAssistantClient(HomeAssistantClient):
             "/v1/states",
             {"entity_ids": sorted(entity_ids)},
         )
+        if self.broker_role == 'guest':
+            if (not isinstance(result, dict) or not isinstance(result.get('states'), list)
+                    or not isinstance(result.get('observed_at'), str)):
+                raise HomeAssistantError('Home Assistant broker returned an invalid snapshot')
+            try:
+                observed = datetime.fromisoformat(result['observed_at'])
+                if observed.tzinfo is None:
+                    raise ValueError('Missing snapshot timezone')
+            except ValueError as error:
+                raise HomeAssistantError('Home Assistant broker returned an invalid snapshot time') from error
+            return StateSnapshot(result['states'], result['observed_at'])
         if not isinstance(result, list):
             raise HomeAssistantError(
                 "Home Assistant broker returned an invalid state list"

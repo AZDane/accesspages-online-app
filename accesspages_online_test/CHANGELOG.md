@@ -1,3 +1,9 @@
+## 0.1.0-beta.25
+
+- Reduce repeated Home Assistant state downloads by sharing a live subscription for entities needed by active guests. The subscription closes after guests stop using their pages.
+- Preserve current guest authorization and fresh validation when operating controls. Unavailable state keeps controls disabled until the Home Assistant connection recovers.
+- Preserve enrollment, pages, isolation mode and guest authorization when updating from beta.24. Back up first, then verify two guests, activity, revocation and restart on the test installation.
+
 ## 0.1.0-beta.24
 
 - Add separate AppArmor network restrictions for guest page processes.

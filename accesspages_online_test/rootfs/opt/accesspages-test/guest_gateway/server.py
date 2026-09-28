@@ -1092,9 +1092,11 @@ class Handler(BaseHTTPRequestHandler):
         }
 
         states_by_entity = {}
+        observed_at = None
 
         if entity_ids:
             states = HA_CLIENT.get_states(entity_ids)
+            observed_at = getattr(states, 'observed_at', None)
             states_by_entity = {
                 state.get("entity_id"): state
                 for state in states
@@ -1121,7 +1123,7 @@ class Handler(BaseHTTPRequestHandler):
                     PROXIMITY_READING_MAX_AGE_SECONDS
                 ),
             },
-            "refreshed_at": isoformat(utc_now()),
+            "refreshed_at": observed_at or isoformat(utc_now()),
             "resources": resources,
         }
 
