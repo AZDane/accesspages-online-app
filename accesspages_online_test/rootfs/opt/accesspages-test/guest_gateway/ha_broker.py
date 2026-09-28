@@ -10,6 +10,7 @@ import threading
 from datetime import datetime, timezone
 from broker_transport import peer_uid
 from guest_auth import GuestAuthority, GuestAuthorizationError
+from ha_snapshot import EntityStateFeed, MAX_ENTITIES
 import nhp
 import feature_policy
 from pathlib import Path
@@ -107,12 +108,19 @@ def _matches_step(value, minimum, maximum, step):
 
 
 def authorized_states(requested):
+    filter_authorized_states(requested, [], {})
+    states = HA_CLIENT.get_states(requested)
+    areas = HA_CLIENT.get_entity_areas() if feature_policy.limited() and (HA_CLIENT.include_areas or HA_CLIENT.exclude_areas) else {}
+    return filter_authorized_states(requested, states, areas)
+
+
+def filter_authorized_states(requested, states, areas):
     if not feature_policy.limited():
-        return HA_CLIENT.get_states(requested)
+        return states
     if any(not isinstance(item, str) or not feature_policy.entity_allowed(item, item.split(".")[0]) for item in requested):
         raise BrokerPolicyError("Entity is outside the sensor/light pilot", HTTPStatus.FORBIDDEN)
-    states = HA_CLIENT.get_states(requested)
-    areas = HA_CLIENT.get_entity_areas() if HA_CLIENT.include_areas or HA_CLIENT.exclude_areas else {}
+    if requested & HA_CLIENT.exclude_entities or any(item.split('.')[0] in HA_CLIENT.exclude_domains for item in requested):
+        raise BrokerPolicyError('Entity is excluded by app configuration', HTTPStatus.FORBIDDEN)
     result = []
     for state in states:
         entity_id = state.get("entity_id", "")
@@ -463,6 +471,48 @@ class GuestHandler(Handler):
     def do_GET(self):
         self._send(404, {'error': 'not found'})
 
+    def _state_authority(self, requested):
+        """Caller holds the saved-policy lock; never invokes HA."""
+        page_id = self._authorized_page()
+        if not page_id:
+            raise GuestAuthorizationError('Page authority required')
+        self.server.authority.authorize(page_id, self.headers.get('X-Guest-Session', ''), self.headers.get('X-NHP-Resource', ''))
+        page = _page(page_id)
+        feature_policy.validate_page(page)
+        assigned = {resource['entity_id'] for resource in page['resources']}
+        if not requested <= assigned:
+            raise BrokerPolicyError('Entity is not assigned', HTTPStatus.FORBIDDEN)
+        filter_authorized_states(requested, [], {})
+        return page_id
+
+    def _states(self, payload):
+        requested = payload.get('entity_ids')
+        if (not isinstance(requested, list) or not requested or len(requested) > MAX_ENTITIES
+                or not all(isinstance(item, str) for item in requested)):
+            raise BrokerPolicyError('A bounded list of entity IDs is required')
+        requested = set(requested)
+        with PAGE_STORE.authority_guard():
+            page_id = self._state_authority(requested)
+        # Policy writers and revocations must not wait for the network. These
+        # states are not eligible for a response until authority is checked again.
+        key = (peer_uid(self.connection), page_id,
+               sha256(self.headers.get('X-Broker-Token', '').encode()).hexdigest(),
+               sha256(self.headers.get('X-Guest-Session', '').encode()).hexdigest(),
+               self.headers.get('X-NHP-Resource', ''))
+        try:
+            snapshot = self.server.snapshots.read(requested, demand_key=key)
+            areas = HA_CLIENT.get_entity_areas() if feature_policy.limited() and (HA_CLIENT.include_areas or HA_CLIENT.exclude_areas) else {}
+            with PAGE_STORE.authority_guard():
+                if self._state_authority(requested) != page_id:
+                    raise GuestAuthorizationError('Page authority changed')
+                states = filter_authorized_states(requested, snapshot, areas)
+                self._send(200, {'states': states, 'observed_at': snapshot.observed_at})
+        except (HomeAssistantError, GuestAuthorizationError, ValueError):
+            self.server.snapshots.withdraw(key)
+            with PAGE_STORE.authority_guard():
+                self._state_authority(requested)
+            raise
+
     def do_POST(self):
         try:
             if self.headers.get('X-Broker-Role', 'guest') != 'guest':
@@ -479,6 +529,9 @@ class GuestHandler(Handler):
                 raise BrokerPolicyError('Guest operation unavailable', HTTPStatus.FORBIDDEN)
             if set(payload) - allowed[self.path]:
                 raise BrokerPolicyError('Unknown request fields')
+            if self.path == '/v1/states':
+                self._states(payload)
+                return
             with PAGE_STORE.authority_guard():
                 page_id = self._authorized_page()
                 if not page_id or ('page_id' in payload and payload['page_id'] != page_id):
@@ -505,11 +558,28 @@ class GuestHandler(Handler):
 class GuestServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path, authority, registry):
+    def __init__(self, path, authority, registry, snapshots=None):
         self.authority = authority
         self.registry = Path(registry)
+        self.snapshots = snapshots if snapshots is not None else EntityStateFeed(HA_CLIENT, self.demand_entities)
         super().__init__(str(path), GuestHandler)
         os.chmod(path, 0o660)
+
+    def demand_entities(self, key, requested):
+        uid, page_id, capability_hash, session_hash, resource = key
+        with PAGE_STORE.authority_guard():
+            record = json.loads(self.registry.read_text())[str(uid)]
+            page = _page(page_id)
+            if (record['page'] != page_id or record['capability_hash'] != capability_hash
+                    or page.get('instance_id', '') != record['instance_id']):
+                return set()
+            self.authority.authorize_digest(page_id, session_hash, resource)
+            feature_policy.validate_page(page)
+            return requested & {item['entity_id'] for item in page['resources']}
+
+    def server_close(self):
+        self.snapshots.close()
+        super().server_close()
 
 
 class HandoffHandler(Handler):

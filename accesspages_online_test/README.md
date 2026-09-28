@@ -17,7 +17,7 @@ The app retains its own Gateway identity, separate connector identity, and TLS p
 
 **Resource isolation** defaults to `page`: guests on one page share a site, with separate guest sessions. Select `guest` for a separate site per invitation. Both modes keep separate workers for each page. Changing modes and restarting revokes all invitations while keeping page settings. See [resource isolation](DOCS.md#resource-isolation) before changing this option.
 
-For beta.24 from beta.23, back up the app and install the update. Supervisor applies the bundled AppArmor profile automatically; this app has no selectable Protection mode toggle. Enrollment, pages and the selected isolation mode are preserved; no service cutover or guest-state migration is required. See [the update guide](DOCS.md#updating-to-beta24).
+For beta.25 from beta.24, back up the app and install the update. Supervisor applies the bundled AppArmor profile automatically; this app has no selectable Protection mode toggle. Enrollment, pages and the selected isolation mode are preserved; no service cutover or guest-state migration is required. See [the update guide](DOCS.md#updating-to-beta25).
 
 Upgrading from before beta.20 requires a coordinated operator cutover of OpenNHP Service and the app. Revoke existing invitations before cutover, preserve pages and app data, and create fresh invitations afterward. Existing invitations and sessions are not carried forward; see [the app guide](DOCS.md#updating-to-resource-isolation).
 

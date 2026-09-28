@@ -141,12 +141,16 @@ class GuestAuthority:
 
     def authorize(self, page_id, secret, resource):
         """Caller holds authority_guard through authorization and HA dispatch."""
+        if not isinstance(secret, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', secret):
+            raise GuestAuthorizationError('This access link has expired or been revoked.')
+        return self.authorize_digest(page_id, hashlib.sha256(secret.encode()).hexdigest(), resource)
+
+    def authorize_digest(self, page_id, digest, resource):
+        """Broker-only demand revalidation; never retain a reusable session secret."""
         try:
-            if not isinstance(secret, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', secret):
-                raise ValueError('Missing session')
             with self.database() as conn:
                 row = conn.execute('SELECT * FROM sessions WHERE hash=? AND page=? AND expires>?', (
-                    hashlib.sha256(secret.encode()).hexdigest(), page_id, int(time.time()))).fetchone()
+                    digest, page_id, int(time.time()))).fetchone()
             if row is None or row['resource'] != resource or self.binding() != (row['gateway_id'], row['epoch']):
                 raise ValueError('Invalid session')
             page = self.pages.load(page_id)
