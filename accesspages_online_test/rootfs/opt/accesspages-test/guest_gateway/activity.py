@@ -1,13 +1,13 @@
 import json
 import os
 import sqlite3
-from http.client import HTTPConnection, HTTPException
-from urllib.parse import urlparse
+from http.client import HTTPException
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 
 from ha import HomeAssistantError, nhp_page_capability
+from broker_transport import AdminConnection
 
 
 RETENTION_DAYS = 30
@@ -409,8 +409,7 @@ class ActivityBrokerError(OSError):
 class BrokerGuestActivityStore:
     """Write-only, page-bound activity client for a guest endpoint."""
 
-    def __init__(self, url: str, token: str, page_id: str):
-        self.url = url
+    def __init__(self, token: str, page_id: str):
         self.token = token
         self.page_id = page_id
 
@@ -424,10 +423,7 @@ class BrokerGuestActivityStore:
                 raise ActivityBrokerError("Authorized page required for activity") from error
         elif page_id and page_id != page:
             raise ActivityBrokerError("Activity page mismatch")
-        broker = urlparse(self.url)
-        if broker.scheme != "http" or not broker.hostname:
-            raise ActivityBrokerError("Activity broker is unavailable")
-        connection = HTTPConnection(broker.hostname, broker.port or 80, timeout=5)
+        connection = AdminConnection()
         try:
             connection.request(
                 "POST",
@@ -443,7 +439,9 @@ class BrokerGuestActivityStore:
                 },
             )
             response = connection.getresponse()
-            body = response.read()
+            body = response.read(65537)
+            if len(body) > 65536:
+                raise ActivityBrokerError("Activity broker response too large")
             if response.status >= 400:
                 raise ActivityBrokerError("Activity broker rejected the event")
             return json.loads(body.decode()) if body else {}

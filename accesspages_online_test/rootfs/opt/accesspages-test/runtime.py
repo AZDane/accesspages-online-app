@@ -312,6 +312,7 @@ class Runtime:
                 'HOST':'127.0.0.1',
                 'PAGE_FILE_MODE':'640','HA_BROKER_URL':'http://127.0.0.1:8083'}
         directory(ROOT/'guest-broker',USERS['broker'],GUEST_BROKER_GROUP,0o2710)
+        directory(ROOT/'guest-events',USERS['admin'],GUEST_BROKER_GROUP,0o2710)
         directory(ROOT/'handoff',USERS['broker'],FRONTEND_GROUP,0o2710)
         workers=self.page_workers.reconcile(common,broker_uid=USERS['broker'],tls_uid=USERS['tls'],admin_uid=USERS['admin'],manifest=manifest)
         guest_socket=str(ROOT/'guest-broker/http.sock')
@@ -329,6 +330,7 @@ class Runtime:
             'NHP_ROUTES_FILE':str(ROOT/'admin/routes.json'),'GATEWAY_ROLE':'admin','GATEWAY_DATA_DIR':str(ROOT/'admin'),'PORT':'8081',
             'ADMIN_TOKEN':self.admin_token,'HA_BROKER_TOKEN':self.broker_admin,
             'PAGE_CAPABILITY_REGISTRY_FILE':str(admin_capabilities),
+            'ADMIN_GUEST_SOCKET':str(ROOT/'guest-events/http.sock'),
             'MACHINE_DIR':str(self.installation.machine_dir)})
         config=nginx_config(ROOT,GATEWAY,route['host'],workers,self.resources)
         configuration=ROOT/'tls/nginx.conf'

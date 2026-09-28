@@ -96,7 +96,7 @@ class PageWorkers:
         # including when an owner later creates the same page ID again.
         identities = {str(r['uid']): {'page': p, 'instance_id': r['instance_id'], 'capability_hash': hashlib.sha256(r['capability'].encode()).hexdigest()} for p, r in records.items()}
         publish(self.root / 'broker/page-workers.json', json.dumps(identities), 0, broker_uid)
-        hashes = {r['page']: r['capability_hash'] for r in identities.values()}
+        hashes = {r['page']: {'uid': int(uid), **r} for uid, r in identities.items()}
         publish(self.root / 'admin/page-capabilities.json', json.dumps(hashes), admin_uid, admin_uid, 0o600)
         active = {str(r['uid']) for r in records.values()}
         for role in list(self.runtime.children):
@@ -132,13 +132,15 @@ class PageWorkers:
             publish(root / 'private/routes.json', json.dumps({**manifest, 'resources': routes}), 0, uid)
             shell = (self.gateway / 'static/access.html').read_text().replace('<html lang="en">', '<html lang="en" data-page-id="' + page + '">', 1)
             publish(self.root / 'public/guest-shells' / (str(uid) + '.html'), shell, 0, 0, 0o644)
-            self.runtime.start('page:' + str(uid), ['python3', str(self.gateway / 'server.py')], {
+            # Executing this entry point requires the AppArmor child-profile
+            # transition; invoking it through Python would inherit the parent.
+            self.runtime.start('page:' + str(uid), [str(self.gateway / 'server.py')], {
                 **common, 'GATEWAY_ROLE': 'guest', 'GATEWAY_BOUND_PAGE_ID': page,
                 'GATEWAY_DATA_DIR': str(root / 'state'), 'GATEWAY_PAGES_DIR': str(root / 'private/pages'),
                 'GATEWAY_HTTP_SOCKET': str(self.socket(record)), 'GATEWAY_FRONTEND_UID': str(tls_uid),
                 'HA_GUEST_BROKER_SOCKET': str(self.root / 'guest-broker/http.sock'), 'HA_BROKER_UID': str(broker_uid),
                 'NHP_PAGE_CAPABILITIES_FILE': str(root / 'private/capability.json'),
                 'NHP_ROUTES_FILE': str(root / 'private/routes.json'),
-                'ACTIVITY_BROKER_URL': 'http://127.0.0.1:8081', 'VERIFICATION_BROKER_URL': 'http://127.0.0.1:8081',
+                'ADMIN_GUEST_SOCKET': str(self.root / 'guest-events/http.sock'), 'ADMIN_UID': str(admin_uid),
             }, uid=uid, groups=[GUEST_BROKER_GROUP])
         return records

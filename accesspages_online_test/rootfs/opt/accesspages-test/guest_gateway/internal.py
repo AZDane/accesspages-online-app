@@ -133,34 +133,4 @@ def handle_post(handler, path, payload, runtime):
             handler._send_json(runtime.HTTPStatus.BAD_GATEWAY, {"error": "Notification delivery failed"})
         return
 
-    if path == "/api/internal/email/verification":
-        if runtime.nhp.ENABLED:
-            handler._send_json(404, {"error": "not found"})
-            return
-        page_id = str(payload.get("page_id", ""))
-        if not handler._is_page_broker(page_id):
-            handler._send_json(runtime.HTTPStatus.UNAUTHORIZED, {"error": "not found"})
-            return
-        grant_id = str(payload.get("grant_id", ""))
-        code = str(payload.get("code", ""))
-        page = handler._load_page(page_id)
-        if page is None:
-            return
-        grant = next((item for item in page["access_grants"] if item["id"] == grant_id), None)
-        if not grant or not grant.get("verification_required") or not runtime.re.fullmatch(r"\d{6}", code):
-            handler._send_json(runtime.HTTPStatus.NOT_FOUND, {"error": "not found"})
-            return
-        try:
-            text, html = runtime.verification_email_content(code)
-            runtime.send_email(
-                runtime.SMTP_CONFIG_STORE.load(),
-                runtime.VERIFICATION_RECIPIENTS.get(page_id, grant_id),
-                "Your Access Pages verification code",
-                text,
-                html_body=html,
-            )
-            handler._send_json(200, {"success": True})
-        except runtime.EmailConfigError as error:
-            handler._send_json(runtime.HTTPStatus.BAD_GATEWAY, {"error": str(error)})
-        return
     handler._send_json(404, {"error": "not found"})

@@ -21,10 +21,27 @@ After changing this setting, save and restart the app. **Changing modes revokes 
 
 The current beta has a shared capacity of eight active resources across installations. Page mode uses one per page; guest mode uses one per invitation. Creating a guest invitation can take longer while its site becomes ready. Creating or retiring resources can briefly interrupt other guests while the installation tunnel reconnects. Capacity exhaustion does not fall back to a shared resource.
 
+## Updating to beta.24
+
+When updating from beta.23, back up the app and install the update on the dedicated
+HA test installation. Enrollment, pages, the selected isolation mode and guest
+authorization are preserved. No connection reset or OpenNHP Service update is
+required. Reload open Admin tabs after updating.
+
+Supervisor applies the bundled AppArmor profile automatically; this app has no
+selectable Protection mode toggle. This update adds separate network restrictions
+for guest page processes. Check Admin, guest controls, activity and any configured
+notifications, then individual guest revocation and an app restart.
+
+This beta targets the standard Home Assistant Supervisor environment. Device
+acceptance, including native ARM64 validation, is still required. If startup or a
+normal operation fails, retain the app and Supervisor logs and restore the app
+backup; do not loosen security settings to work around a failure.
+
 ## Updating to beta.23
 
-When updating from beta.22, back up the app, install the update and keep protection
-mode enabled. Enrollment, pages, the selected isolation mode and guest authorization
+When updating from beta.22, back up the app and install the update.
+Enrollment, pages, the selected isolation mode and guest authorization
 are preserved. No connection reset or service cutover is required. Reload open
 Admin tabs after updating, then check Admin, guest controls and revocation.
 
@@ -33,17 +50,17 @@ warnings contain a limit and event count, without request contents or credential
 
 ## Updating to beta.22
 
-When updating from beta.21, back up the app and install the update with protection
-mode enabled. The tighter AppArmor profile takes effect when the updated app
+When updating from beta.21, back up the app and install the update.
+The tighter AppArmor profile takes effect when the updated app
 starts. Enrollment, page settings and the selected isolation mode are preserved.
 No OpenNHP Service cutover, guest-state migration or connection reset is required.
 
 Check Admin, guest controls and revocation after updating. If the app cannot start
 or a normal operation fails, retain the logs and use the previous reviewed app
-backup for recovery; do not disable protection mode to work around the failure.
+backup for recovery; do not loosen security settings to work around the failure.
 
-The profile restricts file access and executable paths. Guest workers still have
-TCP/UDP permissions; separate worker network confinement is a later change.
+The beta.22 profile restricts file access and executable paths. Separate guest
+worker network restrictions are introduced in beta.24.
 
 ## Updating to resource isolation
 
