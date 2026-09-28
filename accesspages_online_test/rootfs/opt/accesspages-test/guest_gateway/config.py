@@ -92,7 +92,7 @@ ACTIVITY_DB_FILE = Path(
         str(DATA_DIR / "guest-activity.sqlite3"),
     )
 )
-ACTIVITY_BROKER_URL = os.getenv("ACTIVITY_BROKER_URL", "").strip().rstrip("/")
+ADMIN_GUEST_SOCKET = os.getenv("ADMIN_GUEST_SOCKET", "").strip()
 RESET_REQUEST_FILE = Path(
     os.getenv(
         "ACCESS_SERVICE_RESET_REQUEST_FILE",
@@ -115,7 +115,6 @@ VERIFICATION_RECIPIENT_FILE = Path(os.getenv(
     "VERIFICATION_RECIPIENT_FILE",
     str(DATA_DIR / "admin-runtime" / "verification-recipients.json"),
 ))
-VERIFICATION_BROKER_URL = os.getenv("VERIFICATION_BROKER_URL", "").strip().rstrip("/")
 CONNECTOR_PAGE_ROUTES_FILE = Path(os.getenv(
     "CONNECTOR_PAGE_ROUTES_FILE",
     str(DATA_DIR / "guest-runtime" / "connector-routes.json"),
@@ -127,6 +126,8 @@ if GATEWAY_ROLE == 'guest' and os.getenv('ACCESS_TRANSPORT') == 'nhp':
     required_env('GATEWAY_BOUND_PAGE_ID')
     required_env('GATEWAY_HTTP_SOCKET')
     required_env('GATEWAY_FRONTEND_UID')
+    required_env('ADMIN_GUEST_SOCKET')
+    required_env('ADMIN_UID')
 PAGE_CAPABILITY_TOKEN = os.getenv("PAGE_CAPABILITY_TOKEN", "").strip()
 PAGE_CAPABILITY_REGISTRY_FILE = Path(os.getenv(
     "PAGE_CAPABILITY_REGISTRY_FILE",

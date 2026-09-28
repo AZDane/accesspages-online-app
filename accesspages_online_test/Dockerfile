@@ -27,7 +27,7 @@ RUN cd /build/frp \
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.23
+ARG BUILD_VERSION=0.1.0-beta.24
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online test" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
 RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \
@@ -42,9 +42,10 @@ COPY --from=protocol-build /out/machinectl /opt/machinectl
 COPY --from=protocol-build /out/frpc /opt/frpc
 COPY rootfs /
 RUN printf '%s\n' "${BUILD_VERSION}" > /opt/accesspages-test/version
-RUN chmod 0755 /opt/machinectl /opt/frpc /opt/accesspages-test/runtime.py \
+RUN chmod 0755 /opt/machinectl /opt/frpc \
     && find /opt/accesspages-test -type d -exec chmod 0755 {} \; \
-    && find /opt/accesspages-test -type f -exec chmod 0644 {} \;
+    && find /opt/accesspages-test -type f -exec chmod 0644 {} \; \
+    && chmod 0755 /opt/accesspages-test/guest_gateway/server.py
 
 ENTRYPOINT ["/sbin/tini", "-s", "--"]
 CMD ["python3", "/opt/accesspages-test/runtime.py"]

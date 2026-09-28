@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 from datetime import datetime, timedelta, timezone
 from contextlib import ExitStack, contextmanager
 from hashlib import sha256
@@ -26,13 +27,14 @@ import access as access_routes
 import admin as admin_routes
 import internal as internal_routes
 from activity import BrokerGuestActivityStore, GuestActivityStore
+from broker_transport import AdminConnection, peer_uid
 from actions import execute_public_action
 from audit import audit
 from rate_limit import MinimumIntervalRateLimiter, SlidingWindowRateLimiter
 from config import (
     ADMIN_TOKEN,
     ACTIVITY_DB_FILE,
-    ACTIVITY_BROKER_URL,
+    ADMIN_GUEST_SOCKET,
     CONNECTOR_PAGE_ROUTES_FILE,
     CONNECTOR_STATUS_FILE,
     GATEWAY_VERSION,
@@ -63,7 +65,6 @@ from config import (
     RESET_REQUEST_FILE,
     SMTP_CONFIG_FILE,
     ALERT_CONFIG_FILE,
-    VERIFICATION_BROKER_URL,
     VERIFICATION_DB_FILE,
     VERIFICATION_RECIPIENT_FILE,
 )
@@ -172,9 +173,9 @@ POLICY_PUBLISHER = PolicyPublisher(
 )
 ACTIVITY_STORE = (
     BrokerGuestActivityStore(
-        ACTIVITY_BROKER_URL, PAGE_CAPABILITY_TOKEN, GATEWAY_BOUND_PAGE_ID,
+        PAGE_CAPABILITY_TOKEN, GATEWAY_BOUND_PAGE_ID,
     )
-    if GATEWAY_ROLE == "guest" and ACTIVITY_BROKER_URL
+    if GATEWAY_ROLE == "guest" and ADMIN_GUEST_SOCKET
     else GuestActivityStore(ACTIVITY_DB_FILE)
 )
 SMTP_CONFIG_STORE = SMTPConfigStore(SMTP_CONFIG_FILE)
@@ -283,12 +284,21 @@ class GatewayUnixServer(GatewayHTTPServer):
         self.server_name, self.server_port = 'localhost', 0
 
     def get_request(self):
-        from broker_transport import peer_uid
         connection, _address = super().get_request()
+        return connection, ('local', 0)
+
+
+class GuestFrontendServer(GatewayUnixServer):
+    def get_request(self):
+        connection, address = super().get_request()
         if peer_uid(connection) != int(GATEWAY_FRONTEND_UID):
             connection.close()
             raise PermissionError('Frontend identity required')
-        return connection, ('local', 0)
+        return connection, address
+
+
+class GuestEventsServer(GatewayUnixServer):
+    guest_events = True
 
 
 ACCESS_SERVICE_CLIENT = nhp.NHPClient()
@@ -322,6 +332,10 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "GuestGateway/0.5"
 
     def _role_allows(self, path):
+        if getattr(getattr(self, 'server', None), 'guest_events', False):
+            return self.command == 'POST' and path in {
+                '/api/internal/guest-activity', '/api/internal/guest-notification',
+            }
         if nhp.ENABLED and GATEWAY_ROLE == 'guest':
             prefix = '/api/access/' + GATEWAY_BOUND_PAGE_ID
             return bool(GATEWAY_BOUND_PAGE_ID) and (path == prefix or path.startswith(prefix + '/'))
@@ -333,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
                 or bool(self._proxied_page_id())
             )
         if path.startswith("/api/internal/"):
-            return GATEWAY_ROLE in {"admin", "combined"}
+            return not nhp.ENABLED and GATEWAY_ROLE in {"admin", "combined"}
         return True
 
     def _require_role(self, path):
@@ -591,77 +605,52 @@ class Handler(BaseHTTPRequestHandler):
                 PAGE_CAPABILITY_REGISTRY_FILE.read_text(encoding="utf-8")
             )
             expected = str(registry.get(page_id, ""))
-        except (OSError, json.JSONDecodeError):
+            if nhp.ENABLED:
+                if not getattr(getattr(self, 'server', None), 'guest_events', False):
+                    return False
+                record = registry.get(page_id, {})
+                if peer_uid(self.connection) != record.get('uid'):
+                    return False
+                page = PAGE_STORE.load(page_id)
+                if page.get('instance_id') != record.get('instance_id'):
+                    return False
+                expected = record.get('capability_hash', '')
+        except (OSError, ValueError, AttributeError, PageNotFoundError):
             return False
-        return bool(expected) and hmac.compare_digest(
+        return isinstance(expected, str) and bool(expected) and hmac.compare_digest(
             sha256(supplied.encode()).hexdigest(), expected,
         )
 
     def _send_verification_email(self, page_id, grant, code):
-        if not VERIFICATION_BROKER_URL:
-            # Combined/local development mode keeps the same authoritative
-            # grant lookup and never accepts a recipient from the browser.
-            text, html = verification_email_content(code)
-            send_email(
-                SMTP_CONFIG_STORE.load(),
-                VERIFICATION_RECIPIENTS.get(page_id, grant["id"]),
-                "Your Access Pages verification code",
-                text,
-                html_body=html,
-            )
-            return
-        body = json.dumps({
-            "page_id": page_id, "grant_id": grant["id"], "code": code,
-        }).encode()
-        broker = urlparse(VERIFICATION_BROKER_URL)
-        if broker.scheme != "http" or not broker.hostname:
-            raise EmailConfigError("Verification email could not be sent")
-        connection = HTTPConnection(
-            broker.hostname,
-            broker.port or 80,
-            timeout=15,
+        # NHP verification is hosted; only local development sends codes here.
+        text, html = verification_email_content(code)
+        send_email(
+            SMTP_CONFIG_STORE.load(),
+            VERIFICATION_RECIPIENTS.get(page_id, grant["id"]),
+            "Your Access Pages verification code",
+            text,
+            html_body=html,
         )
-        try:
-            connection.request(
-                "POST",
-                "/api/internal/email/verification",
-                body=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Page-Capability": PAGE_CAPABILITY_TOKEN,
-                },
-            )
-            response = connection.getresponse()
-            response.read()
-            if response.status != HTTPStatus.OK:
-                raise EmailConfigError("Verification email could not be sent")
-        except (OSError, HTTPException) as error:
-            raise EmailConfigError("Verification email could not be sent") from error
-        finally:
-            connection.close()
 
     def _send_guest_notification(
         self, page_id, event_type, *, resource_id="", action_id="", outcome=""
     ):
         grant = getattr(self, "active_grant", {})
-        broker_url = VERIFICATION_BROKER_URL
-        capability = PAGE_CAPABILITY_TOKEN
         if nhp.ENABLED and GATEWAY_ROLE == "guest":
             _, capability = nhp_page_capability(page_id)
-        if not broker_url:
+            connection = AdminConnection()
+        else:
             # Compiled page endpoints proxy into the trusted gateway. Re-enter
             # its narrow internal notification route on loopback so recipient
             # selection remains entirely server-controlled.
             if self._proxied_page_id() != page_id:
                 return
-            broker_url = f"http://127.0.0.1:{PORT}"
             capability = getattr(self, "headers", {}).get(
                 "X-Page-Capability", ""
             )
             if not capability:
                 return
-        broker = urlparse(broker_url)
-        connection = HTTPConnection(broker.hostname, broker.port, timeout=5)
+            connection = HTTPConnection('127.0.0.1', PORT, timeout=5)
         try:
             connection.request(
                 "POST",
@@ -680,8 +669,8 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             response = connection.getresponse()
-            response.read()
-            if response.status >= 400:
+            reply = response.read(65537)
+            if response.status >= 400 or len(reply) > 65536:
                 raise HomeAssistantError("Guest notification failed")
         except (OSError, HTTPException) as error:
             raise HomeAssistantError("Guest notification failed") from error
@@ -1930,7 +1919,7 @@ def run():
     PAGES_DIR.mkdir(parents=True, exist_ok=True)
     if nhp.ENABLED and GATEWAY_ROLE == 'guest':
         Path(GATEWAY_HTTP_SOCKET).unlink(missing_ok=True)
-        server = GatewayUnixServer(GATEWAY_HTTP_SOCKET, Handler)
+        server = GuestFrontendServer(GATEWAY_HTTP_SOCKET, Handler)
         print(f'Guest worker ready for page {GATEWAY_BOUND_PAGE_ID}', flush=True)
         server.serve_forever()
         return
@@ -1978,6 +1967,10 @@ def run():
                 page_server.server_close()
                 thread.join(timeout=2)
         return
+    if nhp.ENABLED and GATEWAY_ROLE == 'admin':
+        Path(ADMIN_GUEST_SOCKET).unlink(missing_ok=True)
+        events = GuestEventsServer(ADMIN_GUEST_SOCKET, Handler)
+        Thread(target=events.serve_forever, daemon=True).start()
     server = GatewayHTTPServer((HOST, PORT), Handler)
     print(f"OpenNHP Service HA gateway listening on http://{HOST}:{PORT}")
     print(f"Pages directory: {PAGES_DIR}")

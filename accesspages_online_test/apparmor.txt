@@ -1,11 +1,12 @@
 #include <tunables/global>
 
-# Shared container policy. Per-page UIDs and broker peer checks still enforce
-# internal authority; this policy does not provide per-role network isolation.
+# Supervisory services retain IP networking. Guest entry points transition to
+# a child profile with Unix IPC only; page UIDs and peer checks bind authority.
 profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   # Enumerate the Alpine runtime instead of importing host abstractions that
   # can also grant executable, service-socket or netlink access.
   /opt/accesspages-test/{,**} r,
+  /opt/accesspages-test/guest_gateway/server.py cx -> guest_worker,
   /opt/machinectl rix,
   /opt/frpc r,
   /usr/bin/python3 rix,
@@ -38,8 +39,8 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   /data/{admin,broker,connector,tls,public}/{,**} rwk,
   /data/workers/ rw,
   /data/workers/[2-5][0-9][0-9][0-9][0-9]/{,**} rwk,
-  /data/{guest-broker,handoff}/ rw,
-  /data/{guest-broker,handoff}/http.sock rw,
+  /data/{guest-broker,guest-events,handoff}/ rw,
+  /data/{guest-broker,guest-events,handoff}/http.sock rw,
   /data/ingress/ rw,
   /data/ingress/control.sock rw,
   # The native connector locates its mutable agent state beside its executable.
@@ -88,4 +89,35 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   capability kill,
   signal (receive),
   signal (send) peer=*accesspages_online_test,
+  signal (send) peer=*accesspages_online_test//guest_worker,
+
+  # Mandatory transition: no inherit/unconfined fallback. The worker cannot
+  # return to the parent policy by executing Python or another application file.
+  profile guest_worker flags=(attach_disconnected,mediate_deleted) {
+    /opt/accesspages-test/{,**} r,
+    /usr/bin/python3 rix,
+    /usr/bin/python3.[0-9]* rix,
+    /{usr/,}lib/{,**} mr,
+    /etc/ld-musl-*.path r,
+    /etc/localtime r,
+    # Python imports SSL support even though this role cannot open IP sockets.
+    /etc/ssl/openssl.cnf r,
+    /usr/share/zoneinfo/{,**} r,
+    /data/public/{,**} r,
+    /data/workers/[2-5][0-9][0-9][0-9][0-9]/private/{,**} rk,
+    owner /data/workers/[2-5][0-9][0-9][0-9][0-9]/state/{,**} rwk,
+    owner /data/workers/[2-5][0-9][0-9][0-9][0-9]/http/{,**} rw,
+    /data/{guest-broker,guest-events}/http.sock rw,
+    /dev/null rw,
+    /dev/zero rw,
+    /dev/{random,urandom} r,
+    /dev/{stdout,stderr} w,
+    owner @{PROC}/@{pid}/{stat,status,maps,auxv} r,
+    owner @{PROC}/@{pid}/attr/{current,apparmor/current} r,
+    owner @{PROC}/@{pid}/fd/ r,
+    # No inet/inet6 permissions, including loopback, DNS and raw sockets.
+    network unix stream,
+    signal (receive) peer=*accesspages_online_test,
+    signal (send,receive) peer=*accesspages_online_test//guest_worker,
+  }
 }

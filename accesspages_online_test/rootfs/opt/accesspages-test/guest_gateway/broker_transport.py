@@ -16,17 +16,28 @@ def peer_uid(connection):
     return struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1]
 
 
-class GuestConnection(HTTPConnection):
-    def __init__(self, timeout=10):
+class UnixConnection(HTTPConnection):
+    def __init__(self, path, uid, timeout=10):
         super().__init__('localhost', timeout=timeout)
+        self.path, self.uid = path, int(uid)
 
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
-        self.sock.connect(os.environ['HA_GUEST_BROKER_SOCKET'])
-        if peer_uid(self.sock) != int(os.environ['HA_BROKER_UID']):
+        self.sock.connect(self.path)
+        if peer_uid(self.sock) != self.uid:
             self.close()
-            raise GuestBrokerError('Unexpected broker identity')
+            raise PermissionError('Unexpected broker identity')
+
+
+class GuestConnection(UnixConnection):
+    def __init__(self, timeout=10):
+        super().__init__(os.environ['HA_GUEST_BROKER_SOCKET'], os.environ['HA_BROKER_UID'], timeout)
+
+
+class AdminConnection(UnixConnection):
+    def __init__(self, timeout=5):
+        super().__init__(os.environ['ADMIN_GUEST_SOCKET'], os.environ['ADMIN_UID'], timeout)
 
 
 def guest_request(path, payload, *, headers=None, image=False):
