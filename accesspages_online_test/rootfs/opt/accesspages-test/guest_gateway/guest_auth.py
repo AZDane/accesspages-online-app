@@ -140,13 +140,10 @@ class GuestAuthority:
             raise GuestAuthorizationError('Invalid, used or expired NHP handoff') from error
 
     def authorize(self, page_id, secret, resource):
-        """Caller holds authority_guard through authorization and HA dispatch."""
+        """Caller holds authority_guard; unlocked state I/O requires a recheck."""
         if not isinstance(secret, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', secret):
             raise GuestAuthorizationError('This access link has expired or been revoked.')
-        return self.authorize_digest(page_id, hashlib.sha256(secret.encode()).hexdigest(), resource)
-
-    def authorize_digest(self, page_id, digest, resource):
-        """Broker-only demand revalidation; never retain a reusable session secret."""
+        digest = hashlib.sha256(secret.encode()).hexdigest()
         try:
             with self.database() as conn:
                 row = conn.execute('SELECT * FROM sessions WHERE hash=? AND page=? AND expires>?', (

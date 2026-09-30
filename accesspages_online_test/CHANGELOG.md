@@ -1,3 +1,9 @@
+## 0.1.0-beta.26
+
+- Replace beta.25's shared HA state subscription with bounded REST reads while guests poll their pages. Recheck guest authorization after each state read; unavailable state keeps controls disabled until a successful refresh.
+- Remove the obsolete state-feed module and WebSocket dependency from the package and its build.
+- Preserve enrollment, pages, isolation options, guest sessions and sensor/light controls when updating from beta.25. Back up first, then verify Admin, two guests, activity, revocation and restart.
+
 ## 0.1.0-beta.25
 
 - Reduce repeated Home Assistant state downloads by sharing a live subscription for entities needed by active guests. The subscription closes after guests stop using their pages.

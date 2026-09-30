@@ -1323,7 +1323,6 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
-        verification_email = ""
         if one_time_use and not nhp.ENABLED:
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
@@ -1377,24 +1376,6 @@ class Handler(BaseHTTPRequestHandler):
             "target_path_applied": bool(access_link.get("target_path_applied", False)),
         }
 
-        if verification_required:
-            try:
-                VERIFICATION_RECIPIENTS.set(page_id, grant_id, verification_email)
-            except (EmailConfigError, OSError):
-                try:
-                    ACCESS_SERVICE_CLIENT.delete_access_link(
-                        resource_id=grant.get("resource_id", ""),
-                        access_link_id=grant.get("access_link_id", ""),
-                        page_id=page_id,
-                        grant_id=grant_id,
-                    )
-                except AccessServiceError:
-                    pass
-                self._send_json(
-                    HTTPStatus.INTERNAL_SERVER_ERROR,
-                    {"error": "Could not store verification recipient"},
-                )
-                return
         # The remote AccessLink request may take long enough for an administrator to
         # update or revoke this page. Reload before committing so a stale page
         # snapshot can never restore revoked grants or overwrite newer policy.
