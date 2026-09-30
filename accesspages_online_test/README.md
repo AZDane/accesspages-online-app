@@ -17,7 +17,9 @@ The app retains its own Gateway identity, separate connector identity, and TLS p
 
 **Resource isolation** defaults to `page`: guests on one page share a site, with separate guest sessions. Select `guest` for a separate site per invitation. Both modes keep separate workers for each page. Changing modes and restarting revokes all invitations while keeping page settings. See [resource isolation](DOCS.md#resource-isolation) before changing this option.
 
-Beta.27 requires a coordinated Method Two cutover with OpenNHP Service. Back up first, revoke old local guests through Admin, preserve enrollment/pages/app data, and install/start only at the operator's coordinated point. Create fresh invitations afterward; old invitations and sessions do not carry forward. See [the cutover guide](DOCS.md#updating-to-beta27-method-two).
+Beta.28 fixes guest access after an app restart following Finished Sharing. Updating from beta.27 preserves enrollment, pages, grants and sessions, including the removal of saved invitations. Back up and update the app; no further hosted cutover or invitation replacement is needed. See [the update guide](DOCS.md#updating-from-beta27-to-beta28).
+
+The first update from beta.26 or earlier requires a coordinated Method Two cutover with OpenNHP Service. Back up first, revoke old local guests through Admin, preserve enrollment/pages/app data, and install/start only at the operator's coordinated point. Create fresh invitations afterward; old invitations and sessions do not carry forward. See [the cutover guide](DOCS.md#updating-to-beta27-method-two).
 
 Confirmed **Finished Sharing** removes both saved invitation credentials while preserving guest access and identifier-based revocation. Guest-held copies and older backups are unaffected. Bounded REST state polling and resource isolation remain.
 

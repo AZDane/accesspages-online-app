@@ -21,6 +21,22 @@ After changing this setting, save and restart the app. **Changing modes revokes 
 
 The current beta has a shared capacity of eight active resources across installations. Page mode uses one per page; guest mode uses one per invitation. Creating a guest invitation can take longer while its site becomes ready. Creating or retiring resources can briefly interrupt other guests while the installation tunnel reconnects. Capacity exhaustion does not fall back to a shared resource.
 
+## Updating from beta.27 to beta.28
+
+Beta.28 fixes guest access failing after an app restart following Finished
+Sharing. Back up the app, install the update, and keep the existing enrollment,
+app data and resource-isolation setting. Wait for the app to reconnect, then
+reload the guest page. Existing unexpired grants, sessions and guest-held
+invitations remain valid; the removed invitation stays unavailable in Admin.
+No further hosted cutover or invitation replacement is needed for this update.
+
+Confirm that a guest can still read states and operate a permitted safe light
+after Finished Sharing and another app restart. Keep the guest active until the
+operator finishes the remaining removal and revocation checks. An expired grant
+still requires a fresh invitation through the normal Add Guest workflow.
+
+For the first update from beta.26 or earlier, follow the Method Two cutover below.
+
 ## Updating to beta.27 (Method Two)
 
 This is a coordinated protocol cutover with OpenNHP Service, including its landing

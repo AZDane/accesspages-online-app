@@ -23,7 +23,14 @@ See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages
 
 ## Updating
 
-Beta.27 requires a coordinated Method Two cutover with OpenNHP Service. Back up
+Beta.28 fixes guest access after an app restart following Finished Sharing.
+Updating from beta.27 preserves enrollment, pages, grants and sessions, including
+the removal of saved invitations. Back up and update the app; no further hosted
+cutover or invitation replacement is needed. See
+[the update guide](accesspages_online_test/DOCS.md#updating-from-beta27-to-beta28).
+
+The first update from beta.26 or earlier requires a coordinated Method Two
+cutover with OpenNHP Service. Back up
 first, revoke all old local guest grants through Admin, and preserve enrollment,
 pages and app data. Install/start only at the operator's coordinated point, then
 create fresh invitations after the Service and app are ready. Old invitations
