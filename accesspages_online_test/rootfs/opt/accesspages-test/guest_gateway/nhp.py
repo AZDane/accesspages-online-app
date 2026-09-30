@@ -120,6 +120,8 @@ class NHPClient:
         return {'version': 1, 'methods': methods}
     def create_access_link(self, *, target_path, expires_in, one_time_use=False, verification_method="none", verification_email="", **kwargs):
         token=parse_qs(urlparse(target_path).query)['access_token'][0]
+        if not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+            raise AccessServiceError('Invalid local GuestToken')
         page = urlparse(target_path).path.removeprefix('/access/').strip('/')
         instance = kwargs.get('page_instance_id', '')
         token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -134,17 +136,17 @@ class NHPClient:
             route_reservations.reserve(os.environ['GATEWAY_DATA_DIR'], page, instance, token_hash)
         try:
             resource = wait_for_guest_route(page, instance, token_hash) if guest_mode else resource_for_grant(page, instance, token_hash)
-            result=machine({'op':'mint_access_link','guest_token':token,'resource':resource,'ttl':ttl,'one_time_use':one_time_use,'verification_method':verification_method,'verification_email':verification_email})
+            result=machine({'op':'mint_access_link','guest_token_hash':token_hash,'resource':resource,'ttl':ttl,'one_time_use':one_time_use,'verification_method':verification_method,'verification_email':verification_email})
             secret=access_credential(result['access_link'])
             ident=hashlib.sha256(secret.encode()).hexdigest()
-            with db('nhp-links') as c:
-                c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY, secret TEXT NOT NULL)')
-                c.execute('INSERT INTO links VALUES(?,?)',(ident,secret))
+            with revocation_db() as c:
+                c.execute('INSERT INTO links(id) VALUES(?)', (ident,))
         except Exception:
             if guest_mode:
                 route_reservations.cancel(os.environ['GATEWAY_DATA_DIR'], token_hash)
             raise
-        return {'access_link_url':result['access_link'],'access_link_id':ident,'resource_id':resource,'type':'nhp','target_path_applied':True,'expires_at':datetime.fromtimestamp(result['expires'],timezone.utc).isoformat()}
+        invitation = result['access_link'].split('#', 1)[0] + '#v2.' + secret + '.' + token
+        return {'access_link_url':invitation,'access_link_id':ident,'resource_id':resource,'type':'nhp','target_path_applied':True,'expires_at':datetime.fromtimestamp(result['expires'],timezone.utc).isoformat()}
     def prepare_revocation(self, *, access_link_id, page_id, grant_id):
         # Durable owner intent precedes local mutation. A restarted worker finishes
         # local denial before sending authority revocation; it never regrants.
@@ -162,7 +164,7 @@ class NHPClient:
         # Commit the outbox before trying the network. The local guest has
         # already been disabled; service outages must not lose revocation.
         with revocation_db() as c:
-            row=c.execute('SELECT secret FROM links WHERE id=?',(access_link_id,)).fetchone()
+            row=c.execute('SELECT id FROM links WHERE id=? UNION SELECT id FROM pending_revocations WHERE id=?', (access_link_id, access_link_id)).fetchone()
             if row is None:return True
             c.execute('INSERT OR IGNORE INTO pending_revocations(id) VALUES(?)',(access_link_id,))
         if not _revocation_lock.acquire(blocking=False):
@@ -177,9 +179,19 @@ _revocation_lock=threading.Lock()
 def revocation_db():
     c=db('nhp-links')
     c.execute('PRAGMA synchronous=FULL')
+    c.execute('PRAGMA secure_delete=ON')
     try:
         with c:
-            c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY,secret TEXT NOT NULL)')
+            # Serialize schema migration with minting and the retry worker. The
+            # legacy ID already equals the service's public SHA-256 reference;
+            # preserve it and every outbox row without contacting the service.
+            c.execute('BEGIN IMMEDIATE')
+            c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY)')
+            if 'secret' in {r['name'] for r in c.execute('PRAGMA table_info(links)')}:
+                c.execute('CREATE TABLE links_without_credentials(id TEXT PRIMARY KEY)')
+                c.execute('INSERT INTO links_without_credentials SELECT id FROM links')
+                c.execute('DROP TABLE links')
+                c.execute('ALTER TABLE links_without_credentials RENAME TO links')
             c.execute('CREATE TABLE IF NOT EXISTS pending_revocations(id TEXT PRIMARY KEY)')
             columns={r['name'] for r in c.execute('PRAGMA table_info(pending_revocations)')}
             for name in ('page','grant_id'):
@@ -188,12 +200,10 @@ def revocation_db():
     finally:c.close()
 
 def _send_revocation(ident):
-    with revocation_db() as c:
-        row=c.execute('SELECT secret FROM links WHERE id=?',(ident,)).fetchone()
-    if row is not None:
-        result=machine({'op':'revoke_link','access':row['secret'],'defer_transport':15})
-        if result.get('state')!='revoked' or result.get('network_admission_update') not in ('applied','deferred'):
-            raise AccessServiceError('Local access revoked; network revocation is awaiting confirmation')
+    # Even an orphaned legacy outbox row must be sent, never silently discarded.
+    result=machine({'op':'revoke_link','access_link_id':ident,'defer_transport':15})
+    if result.get('state')!='revoked' or result.get('network_admission_update') not in ('applied','deferred'):
+        raise AccessServiceError('Local access revoked; network revocation is awaiting confirmation')
     with revocation_db() as c:
         c.execute('DELETE FROM pending_revocations WHERE id=?',(ident,))
         c.execute('DELETE FROM links WHERE id=?',(ident,))
@@ -215,6 +225,11 @@ def retry_revocations(page_store=None):
     finally:_revocation_lock.release()
 
 def start_revocation_worker(page_store=None):
+    # Remove the legacy credential column before accepting owner requests.
+    with revocation_db():
+        pass
+    if page_store is not None:
+        page_store.recover_removed_links()
     def run():
         while True:
             try:retry_revocations(page_store)
@@ -233,10 +248,10 @@ def handoff(handler, authority):
         size = int(handler.headers.get('Content-Length', '0'))
         if not 0 < size <= 8192:
             raise ValueError()
-        form = parse_qs(handler.rfile.read(size).decode(), max_num_fields=2)
-        if set(form) != {'nhp_token'} or len(form['nhp_token']) != 1:
+        form = parse_qs(handler.rfile.read(size).decode(), keep_blank_values=True, strict_parsing=True, max_num_fields=3)
+        if set(form) != {'nhp_token', 'guest_token'} or any(len(v) != 1 for v in form.values()):
             raise ValueError()
-        result = authority.redeem(form['nhp_token'][0], handler.headers.get('Origin'), handler.headers.get('X-NHP-Resource', ''))
+        result = authority.redeem(form['nhp_token'][0], form['guest_token'][0], handler.headers.get('Origin'), handler.headers.get('X-NHP-Resource', ''))
         page, token = result['page_id'], result['session']
         selector = session_selector(token)
         handler._send_json(303, {'authenticated': True}, {

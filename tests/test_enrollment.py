@@ -155,11 +155,13 @@ class EnrollmentTests(unittest.TestCase):
             with patch.object(nhp, 'machine', side_effect=operation), patch.dict(os.environ, {'NHP_BINDING_FILE': str(binding), 'NHP_ROUTES_FILE': str(routes)}):
                 client = nhp.NHPClient()
                 result = client.create_access_link(target_path='/access/front-door?access_token='+'G'*43, expires_in='1h')
-                self.assertEqual(result['access_link_url'], link)
+                self.assertEqual(result['access_link_url'], LANDING+'/#v2.'+TOKEN+'.'+'G'*43)
+                self.assertEqual(calls[0]['guest_token_hash'], hashlib.sha256(('G'*43).encode()).hexdigest())
+                self.assertNotIn('guest_token', calls[0])
                 self.assertEqual(calls[0]['resource'], resource)
                 self.assertEqual(result['access_link_id'], hashlib.sha256(TOKEN.encode()).hexdigest())
                 client.delete_access_link(access_link_id=result['access_link_id'])
-                self.assertEqual(calls[-1], {'op': 'revoke_link', 'access': TOKEN, 'defer_transport': 15})
+                self.assertEqual(calls[-1], {'op': 'revoke_link', 'access_link_id': result['access_link_id'], 'defer_transport': 15})
                 with nhp.revocation_db() as database:
                     self.assertEqual(database.execute('SELECT COUNT(*) FROM links').fetchone()[0], 0)
                     self.assertEqual(database.execute('SELECT COUNT(*) FROM pending_revocations').fetchone()[0], 0)

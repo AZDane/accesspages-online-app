@@ -21,6 +21,69 @@ After changing this setting, save and restart the app. **Changing modes revokes 
 
 The current beta has a shared capacity of eight active resources across installations. Page mode uses one per page; guest mode uses one per invitation. Creating a guest invitation can take longer while its site becomes ready. Creating or retiring resources can briefly interrupt other guests while the installation tunnel reconnects. Capacity exhaustion does not fall back to a shared resource.
 
+## Updating to beta.27 (Method Two)
+
+This is a coordinated protocol cutover with OpenNHP Service, including its landing
+page. Do not install or start this version until the operator schedules the
+cutover. There is no mixed-version invitation support. These steps take precedence
+over the older version-specific update and rollback notes below.
+
+1. Record the installed version, pages and intended guest policies. Make a private
+   Home Assistant backup including this app. Keep enrollment, app data and pending
+   revocations; do not reset the connection or edit stored state.
+2. Stop sharing and admitting guests. In Admin, use the existing revoke controls
+   to remove every old local guest grant. This immediately denies its sessions and
+   preserves pending service revocations. Confirm each page has no legacy guest.
+3. While the operator keeps the hosted authority stopped and prepares and validates
+   its separate hash-only database candidate, update this app from GitHub. Keep it
+   stopped until the operator coordinates startup of the updated Service, landing
+   page and app. The operator preserves Gateway identities, resource ownership,
+   epochs and pending work; do not manufacture replacement identifiers.
+4. Start the updated app when instructed and reload Admin tabs. Confirm enrollment,
+   pages, isolation mode and routes remain correct. First startup removes the old
+   local credential-registry column and interrupted page-write files while keeping
+   pending revocations and invitation-removal markers.
+5. Create fresh invitations through Add Guest, selecting expiry and verification
+   again. One-part invitations cannot be upgraded and must be replaced. Confirm
+   admission, configured verification, permitted states/actions, activity, page
+   isolation, revocation and restart with the operator before ending maintenance.
+6. After acceptance, make a new customer backup paired with the operator's validated
+   v2 hosted backup. These establish the oldest supported recovery baseline. Retire
+   pre-v2 operational backups only after that succeeds. Never restore old active
+   grants or enable the old protocol to work around a failed cutover; keep admission
+   closed and contact the operator.
+
+The Gateway creates a new random GuestToken and stores its hash in the local
+grant. OpenNHP Service receives only that hash. The saved v2 invitation combines
+an AccessLink admission credential and GuestToken; the browser uses AccessLink for
+native enrollment and NHP knocks, then presents GuestToken separately to the
+Guest Gateway along with the signed handoff. GuestToken stays in browser memory
+through verification; reopening the original invitation is required if that
+memory is lost. Both credentials must remain private.
+
+### Finished Sharing
+
+Copy, email, share or display the invitation QR as needed. These actions and closing
+the dialog leave the saved invitation available. When finished distributing it,
+choose **Finished Sharing** and confirm. The app removes both saved invitation
+credentials and no longer offers its URL or QR, including after restart or stale
+Admin edits. The guest's access, existing session, verification requirements,
+expiry and activity remain intact. Revoke Guest still works through authenticated
+identifier-based management, including durable retry after a service outage.
+
+Finished Sharing does not remove guest-held copies, sent messages, clipboard
+contents or older backups, and does not claim secure erasure. Use revocation to
+end guest access.
+
+### Security boundary
+
+For fresh v2 grants, hosted database contents and the handoff signing key alone
+cannot supply the missing random GuestToken required by the Gateway. A valid
+signature and hash do not replace presenting GuestToken, and GuestToken alone
+does not replace NHP admission. Hosted landing-page JavaScript remains trusted
+because it reads the invitation credentials. Ordinary session cookies remain
+bearer credentials. Keep backups and sharing channels private.
+
 ## Updating to beta.26
 
 When updating from beta.25, back up the app and install the update on the dedicated

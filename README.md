@@ -23,13 +23,16 @@ See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages
 
 ## Updating
 
-For beta.26 from beta.25, back up the app and install the update.
-Supervisor applies the bundled AppArmor profile automatically; this app has no
-selectable Protection mode toggle. Enrollment, pages and the selected isolation mode are preserved;
-no service cutover or guest-state migration is required. See
-[the update guide](accesspages_online_test/DOCS.md#updating-to-beta26).
-Beta.26 replaces beta.25's shared state subscription with bounded REST reads
-while guests poll their pages.
+Beta.27 requires a coordinated Method Two cutover with OpenNHP Service. Back up
+first, revoke all old local guest grants through Admin, and preserve enrollment,
+pages and app data. Install/start only at the operator's coordinated point, then
+create fresh invitations after the Service and app are ready. Old invitations
+and sessions do not carry forward. See
+[the cutover guide](accesspages_online_test/DOCS.md#updating-to-beta27-method-two).
+
+Confirmed **Finished Sharing** removes both saved invitation credentials without
+ending guest access or identifier-based revocation. Guest-held copies and older
+backups are unaffected. Bounded REST state polling and resource isolation remain.
 
 Upgrading from before beta.20 requires a coordinated operator cutover of OpenNHP Service
 and the app. It is not an automatic upgrade of existing route or session state.

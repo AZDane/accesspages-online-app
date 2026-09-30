@@ -21,12 +21,12 @@ class RevocationRetryTests(unittest.TestCase):
         self.env=patch.dict(os.environ,{'GATEWAY_DATA_DIR':self.directory.name})
         self.env.start();self.addCleanup(self.env.stop)
         with nhp.revocation_db() as c:
-            c.execute('INSERT INTO links VALUES(?,?)',('invitation-id','private-demo-invitation'))
+            c.execute('INSERT INTO links(id) VALUES(?)',('invitation-id',))
 
     def pending(self):
         with nhp.revocation_db() as c:return c.execute('SELECT COUNT(*) FROM pending_revocations').fetchone()[0]
 
-    def test_service_outage_then_process_restart_retries_and_erases_secret(self):
+    def test_service_outage_then_process_restart_retries_and_clears_registry(self):
         with patch.object(nhp,'machine',side_effect=AccessServiceError('unavailable')):
             with self.assertRaises(AccessServiceError):nhp.NHPClient().delete_access_link(access_link_id='invitation-id')
         self.assertEqual(self.pending(),1)

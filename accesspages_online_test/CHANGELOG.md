@@ -1,3 +1,10 @@
+## 0.1.0-beta.27
+
+- Require a coordinated Method Two update of OpenNHP Service and this app. Back up first, revoke every old local guest through Admin, preserve app data, and create fresh invitations only after both components are ready. Old invitations and sessions do not carry forward; see the [cutover guide](DOCS.md#updating-to-beta27-method-two).
+- Generate GuestToken locally and require its separate presentation after AccessLink-based native NHP admission. OpenNHP Service stores only its hash. Keep the same fresh Agent identity through verification continuation.
+- Add confirmed Finished Sharing to remove both saved invitation credentials while preserving the guest's grant, session, expiry, activity and identifier-based revocation. Copying, emailing, sharing, QR display and closing the dialog do not remove the invitation. Guest-held copies and older backups are unaffected; this is not secure erasure.
+- Remove the old local credential-registry copy on first startup, retain pending revocations, and prevent stale edits or restart from restoring removed invitations. Preserve bounded REST state polling and existing resource isolation.
+
 ## 0.1.0-beta.26
 
 - Replace beta.25's shared HA state subscription with bounded REST reads while guests poll their pages. Recheck guest authorization after each state read; unavailable state keeps controls disabled until a successful refresh.
