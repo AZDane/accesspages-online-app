@@ -139,6 +139,29 @@ def handle_get(handler, parsed, path, runtime):
 
 
 def handle_post(handler, path, payload, runtime):
+    if path.startswith('/api/admin/pages/') and path.endswith('/finish-sharing'):
+        if not handler._require_admin():
+            return
+        parts = path.removeprefix('/api/admin/pages/').split('/')
+        if len(parts) != 4 or parts[1] != 'grants' or not parts[0] or not parts[2]:
+            handler._send_json(404, {'error': 'not found'})
+            return
+        page_id, _, grant_id, _ = parts
+        try:
+            with runtime.page_action_lock(page_id):
+                if isinstance(runtime.ACCESS_SERVICE_CLIENT, runtime.nhp.NHPClient):
+                    # Also covers upgrades/test entry points without the worker.
+                    # Migration is local and never waits for the hosted service.
+                    with runtime.nhp.revocation_db():
+                        pass
+                page = runtime.PAGE_STORE.remove_saved_access_link(page_id, grant_id)
+            handler._send_json(200, runtime.page_admin_view(page))
+        except (runtime.PageConfigError, runtime.PageNotFoundError) as error:
+            handler._send_page_error(error)
+        except (OSError, runtime.sqlite3.Error):
+            handler._send_json(500, {'error': 'Could not finish removing the saved link; please retry'})
+        return
+
     if path == "/api/admin/connection/reset":
         if not handler._require_admin():
             return

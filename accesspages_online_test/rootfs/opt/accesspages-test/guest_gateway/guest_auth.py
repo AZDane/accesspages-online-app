@@ -3,6 +3,7 @@ import base64
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -63,8 +64,8 @@ class GuestAuthority:
 
     def binding(self):
         value = json.loads(Path(os.environ['NHP_BINDING_FILE']).read_text())
-        epoch = value['route']['epoch'] if nhp.INSTALLATION_ROUTING else 0
-        if type(epoch) is not int or epoch < 0 or not isinstance(value['gateway_id'], str):
+        epoch = value['route']['epoch']
+        if type(epoch) is not int or epoch < 1 or not isinstance(value['gateway_id'], str) or not value['gateway_id']:
             raise ValueError('Invalid gateway binding')
         return value['gateway_id'], epoch
 
@@ -72,7 +73,7 @@ class GuestAuthority:
         if not isinstance(token, str) or len(token) > 4096:
             raise ValueError('Invalid handoff')
         prefix, body, signature = token.split('.')
-        if prefix != 'nhp-guest-v1':
+        if prefix != 'nhp-guest-v2':
             raise ValueError('Invalid handoff')
         decode = lambda value: base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
         key = base64.b64decode(Path(os.environ['NHP_VERIFY_KEY_FILE']).read_text())
@@ -84,19 +85,23 @@ class GuestAuthority:
                 or claims.get('gateway_id') != gateway_id
                 or type(claims.get('iat')) is not int or type(claims.get('exp')) is not int
                 or claims['iat'] > now + 5 or now >= claims['exp'] or not 0 < claims['exp'] - claims['iat'] <= 60
-                or not isinstance(claims.get('guest_token'), str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', claims['guest_token'])
+                or 'guest_token' in claims or not isinstance(claims.get('guest_token_hash'), str) or not re.fullmatch(r'[a-f0-9]{64}', claims['guest_token_hash'])
                 or not isinstance(claims.get('grant_id'), str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', claims['grant_id'])):
             raise ValueError('Invalid handoff')
-        if nhp.INSTALLATION_ROUTING and (type(claims.get('gateway_epoch')) is not int or claims['gateway_epoch'] != epoch):
+        if type(claims.get('gateway_epoch')) is not int or claims['gateway_epoch'] != epoch:
             raise ValueError('Invalid gateway epoch')
         return claims, gateway_id, epoch
 
-    def redeem(self, token, origin, frontend_resource):
+    def redeem(self, token, guest_token, origin, frontend_resource):
         try:
             if origin != nhp.LANDING_ORIGIN:
                 raise ValueError('Origin rejected')
             claims, gateway_id, epoch = self.verify(token)
-            digest = hashlib.sha256(claims['guest_token'].encode()).hexdigest()
+            if not isinstance(guest_token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', guest_token):
+                raise ValueError('GuestToken required')
+            digest = hashlib.sha256(guest_token.encode()).hexdigest()
+            if not hmac.compare_digest(digest, claims['guest_token_hash']):
+                raise ValueError('GuestToken does not match admission')
             with self.database() as conn, self.pages.authority_guard():
                 conn.execute('BEGIN IMMEDIATE')
                 now = int(time.time())
@@ -106,7 +111,7 @@ class GuestAuthority:
                 for item in self.pages.list_pages():
                     page = self.pages.load(item['id'])
                     for grant in page['access_grants']:
-                        if grant['token_hash'] == digest and grant_expiry(grant) > now:
+                        if hmac.compare_digest(grant['token_hash'], digest) and grant_expiry(grant) > now:
                             if match is not None:
                                 raise ValueError('Ambiguous grant')
                             match = (page, grant)
@@ -121,12 +126,11 @@ class GuestAuthority:
                     if claims.get('verification_method') not in expected or claims.get('verified_email') != email:
                         raise ValueError('Handoff does not satisfy guest policy')
                 expires = min(now + 3600, int(grant_expiry(grant)))
-                if nhp.INSTALLATION_ROUTING:
-                    if claims.get('destination') != urlparse(nhp.origin_for_resource(claims['resource'])).netloc:
-                        raise ValueError('Wrong destination')
-                    if type(claims.get('session_exp')) is not int or not now < claims['session_exp'] <= claims['iat'] + 3600:
-                        raise ValueError('Invalid session deadline')
-                    expires = min(expires, claims['session_exp'])
+                if claims.get('destination') != urlparse(nhp.origin_for_resource(claims['resource'])).netloc:
+                    raise ValueError('Wrong destination')
+                if type(claims.get('session_exp')) is not int or not now < claims['session_exp'] <= claims['iat'] + 3600:
+                    raise ValueError('Invalid session deadline')
+                expires = min(expires, claims['session_exp'])
                 secret = secrets.token_urlsafe(32)
                 conn.execute('DELETE FROM used WHERE expires<=?', (now,))
                 conn.execute('DELETE FROM sessions WHERE expires<=?', (now,))

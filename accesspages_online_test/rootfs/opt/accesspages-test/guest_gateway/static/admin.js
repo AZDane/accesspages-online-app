@@ -237,13 +237,15 @@ function settleConfirmation(accepted) {
   resolve(accepted);
 }
 
-function confirmAction(message) {
+function confirmAction(message, {title = "Confirm this action", acceptLabel = "Confirm"} = {}) {
   if (confirmationResolver) {
     return Promise.resolve(false);
   }
   return new Promise((resolve) => {
     confirmationResolver = resolve;
     confirmMessage.textContent = message;
+    document.getElementById("confirm-title").textContent = title;
+    acceptConfirmButton.textContent = acceptLabel;
     confirmDialog.showModal();
     acceptConfirmButton.focus();
   });
@@ -1526,7 +1528,7 @@ function qrCodeSvg(value, label) {
   return svg;
 }
 
-function buildSharePanel(guestName, activationUrl) {
+function buildSharePanel(guestName, activationUrl, pageId, grantId) {
   const panel = document.createElement("section");
   panel.className = "link-sharing";
 
@@ -1554,7 +1556,7 @@ function buildSharePanel(guestName, activationUrl) {
       try {
         await navigator.share({
           title: `Access Pages for ${guestName}`,
-          text: message,
+          text: shareMessage(guestName, await savedInvitationUrl(pageId, grantId)),
         });
       } catch (error) {
         if (error.name !== "AbortError") {
@@ -1580,9 +1582,14 @@ function buildSharePanel(guestName, activationUrl) {
     card.append(qrCodeSvg(value, `${title} QR code`), caption);
     qrGrid.appendChild(card);
   });
-  qrToggle.addEventListener("click", () => {
-    const isHidden = qrGrid.classList.toggle("hidden");
-    qrToggle.textContent = isHidden ? "Show QR codes" : "Hide QR codes";
+  qrToggle.addEventListener("click", async () => {
+    try {
+      await savedInvitationUrl(pageId, grantId);
+      const isHidden = qrGrid.classList.toggle("hidden");
+      qrToggle.textContent = isHidden ? "Show QR codes" : "Hide QR codes";
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
   });
   actions.appendChild(qrToggle);
 
@@ -1611,10 +1618,17 @@ function buildSharePanel(guestName, activationUrl) {
     };
     emailInput.addEventListener("input", updateEmailHref);
     updateEmailHref();
-    emailLink.addEventListener("click", (event) => {
+    emailLink.addEventListener("click", async (event) => {
+      event.preventDefault();
       if (emailInput.value && !emailInput.checkValidity()) {
-        event.preventDefault();
         emailInput.reportValidity();
+        return;
+      }
+      try {
+        await savedInvitationUrl(pageId, grantId);
+        window.open(emailLink.href, "_top");
+      } catch (error) {
+        setStatus(error.message, "error");
       }
     });
     emailLabel.appendChild(emailInput);
@@ -1636,12 +1650,16 @@ function buildSharePanel(guestName, activationUrl) {
     };
     phoneInput.addEventListener("input", updateSmsHref);
     updateSmsHref();
-    smsLink.addEventListener("click", () => {
-      if (!legacyCopyText(message, smsLink)) {
-        setStatus(
-          "Messages opened, but copying was blocked. Copy the links manually.",
-          "error",
-        );
+    smsLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        const currentMessage = shareMessage(guestName, await savedInvitationUrl(pageId, grantId));
+        if (!legacyCopyText(currentMessage, smsLink)) {
+          setStatus("Messages opened, but copying was blocked. Copy the links manually.", "error");
+        }
+        window.open(smsLink.href, "_top");
+      } catch (error) {
+        setStatus(error.message, "error");
       }
     });
     phoneLabel.appendChild(phoneInput);
@@ -1650,6 +1668,92 @@ function buildSharePanel(guestName, activationUrl) {
     panel.appendChild(recipients);
   }
   return panel;
+}
+
+const removedInvitations = new Set();
+const savedInvitationRemovedStatus = "Saved invitation removed — guest access is unchanged";
+// Notify other open owner views without persisting invitation data in browser storage.
+const invitationUpdates = typeof BroadcastChannel === "function"
+  ? new BroadcastChannel("access-pages-invitations") : null;
+if (invitationUpdates) {
+  invitationUpdates.onmessage = ({data}) => {
+    if (typeof data?.pageId === "string" && typeof data?.grantId === "string") {
+      showSavedInvitationRemoved(data.pageId, data.grantId);
+    }
+  };
+}
+
+function invitationKey(pageId, grantId) {
+  return `${pageId}/${grantId}`;
+}
+
+function showSavedInvitationRemoved(pageId, grantId) {
+  removedInvitations.add(invitationKey(pageId, grantId));
+  if (currentPage?.id === pageId) {
+    const grant = currentPage.access_grants?.find((item) => item.id === grantId);
+    if (grant) {
+      grant.access_link_url = "";
+      grant.saved_link_removed = true;
+      delete grant.access_url;
+    }
+    renderAccessGrants(currentPage);
+  }
+  if (access_linkResult.dataset.pageId === pageId && access_linkResult.dataset.grantId === grantId) {
+    const status = document.createElement("p");
+    status.textContent = savedInvitationRemovedStatus;
+    access_linkResult.replaceChildren(status);
+  }
+}
+
+async function savedInvitationUrl(pageId, grantId) {
+  const response = await adminApi.fetch(`api/admin/pages/${encodeURIComponent(pageId)}`);
+  const page = await responseJson(response, "Could not retrieve the saved invitation");
+  if (!response.ok) throw new Error(page.error || "Could not retrieve the saved invitation");
+  const grant = page.access_grants?.find((item) => item.id === grantId);
+  if (!grant?.access_link_url || removedInvitations.has(invitationKey(pageId, grantId))) {
+    showSavedInvitationRemoved(pageId, grantId);
+    throw new Error("This invitation is no longer saved. Existing guest copies are unaffected.");
+  }
+  return grant.access_link_url;
+}
+
+function finishedSharingButton(pageId, grant) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  button.textContent = "Finished Sharing";
+  button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    const confirmed = await confirmAction(
+      "Remove the app's saved copy of this invitation? You won't be able to retrieve or copy this same link again. " +
+      "Guest access, existing sessions, expiry, verification, activity and revocation stay unchanged. " +
+      "Existing guest copies and older backups are unaffected. This is not secure erasure.",
+      {title: "Finished sharing this invitation?", acceptLabel: "Remove Saved Link"},
+    );
+    if (!confirmed) return;
+    button.disabled = true;
+    try {
+      const response = await adminApi.fetch(
+        `api/admin/pages/${encodeURIComponent(pageId)}/grants/${encodeURIComponent(grant.id)}/finish-sharing`,
+        {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"},
+      );
+      const data = await responseJson(response, "Could not remove the saved invitation");
+      if (!response.ok) throw new Error(data.error || "Could not remove the saved invitation");
+      grant.access_link_url = "";
+      delete grant.access_url;
+      if (currentPage?.id === pageId) currentPage.access_grants = data.access_grants;
+      showSavedInvitationRemoved(pageId, grant.id);
+      invitationUpdates?.postMessage({pageId, grantId: grant.id});
+      if (userDialog.open) setUserDialogStatus(savedInvitationRemovedStatus, "success");
+      else setStatus(savedInvitationRemovedStatus, "success");
+    } catch (error) {
+      if (userDialog.open) setUserDialogStatus(`Error: ${error.message}`, "error");
+      else setStatus(`Error: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 function renderAccessGrants(page) {
@@ -1669,6 +1773,11 @@ function renderAccessGrants(page) {
   }
 
   grants.forEach((grant) => {
+    if (removedInvitations.has(invitationKey(page.id, grant.id))) {
+      grant.access_link_url = "";
+      grant.saved_link_removed = true;
+      delete grant.access_url;
+    }
     const card = document.createElement("article");
     card.className = "grant-card";
 
@@ -1695,7 +1804,7 @@ function renderAccessGrants(page) {
     copyButton.className = "secondary";
     copyButton.textContent = "Copy activation";
     copyButton.addEventListener("click", () => {
-      copyText(grant.access_link_url, copyButton).catch((error) => {
+      savedInvitationUrl(page.id, grant.id).then((url) => copyText(url, copyButton)).catch((error) => {
         setStatus(`Copy failed: ${error.message}`, "error");
       });
     });
@@ -1720,7 +1829,15 @@ function renderAccessGrants(page) {
       });
     });
 
-    actions.append(activityButton, copyButton, revokeButton);
+    actions.appendChild(activityButton);
+    if (grant.access_link_url) {
+      actions.append(copyButton, finishedSharingButton(page.id, grant));
+    } else {
+      const status = document.createElement("span");
+      status.textContent = savedInvitationRemovedStatus;
+      copy.appendChild(status);
+    }
+    actions.appendChild(revokeButton);
     card.append(copy, actions);
     grantList.appendChild(card);
   });
@@ -2031,6 +2148,9 @@ async function generateAccessLink() {
     ];
 
     access_linkResult.replaceChildren();
+    access_linkResult.dataset.pageId = currentPage.id;
+    access_linkResult.dataset.grantId = data.grant.id;
+    const invitationPageId = currentPage.id;
 
     const activationLabel = document.createElement("strong");
     activationLabel.textContent = "Access Pages link";
@@ -2048,7 +2168,7 @@ async function generateAccessLink() {
     activationButton.className = "secondary";
     activationButton.textContent = "Copy guest link";
     activationButton.addEventListener("click", () => {
-      copyText(data.grant.access_link_url, activationButton).catch((error) => {
+      savedInvitationUrl(invitationPageId, data.grant.id).then((url) => copyText(url, activationButton)).catch((error) => {
         setUserDialogStatus(`Copy failed: ${error.message}`, "error");
       });
     });
@@ -2064,12 +2184,15 @@ async function generateAccessLink() {
     const sharePanel = buildSharePanel(
       userName,
       data.grant.access_link_url,
+      invitationPageId,
+      data.grant.id,
     );
     const sharingContent = document.createElement("div");
     sharingContent.className = "access_link-sharing-content";
     sharingContent.append(activationRow, sharePanel);
 
     renderInvitationDelivery(access_linkResult, sharingContent, data.email_delivery);
+    access_linkResult.appendChild(finishedSharingButton(invitationPageId, data.grant));
     access_linkResult.classList.remove("hidden");
     access_linkResult.classList.remove("result-reveal");
     void access_linkResult.offsetWidth;

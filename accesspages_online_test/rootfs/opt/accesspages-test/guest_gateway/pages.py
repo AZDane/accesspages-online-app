@@ -116,7 +116,9 @@ class PageStore:
                 f"Could not read page configuration: {error}"
             ) from error
 
-        return validate_page(payload, required_id=page_id)
+        page = validate_page(payload, required_id=page_id)
+        self._omit_removed_links(page)
+        return page
 
     def create(self, payload: object) -> dict:
         with self.authority_guard(write=True):
@@ -160,6 +162,59 @@ class PageStore:
     def replace(self, page_id: str, page: dict) -> dict:
         with self.authority_guard(write=True):
             return self._replace_unlocked(page_id, page)
+
+    def _omit_removed_links(self, page):
+        for grant in page["access_grants"]:
+            if (self.directory / '.removed-links' / grant['token_hash']).is_file():
+                grant['access_link_url'] = ''
+                grant['saved_link_removed'] = True
+
+    def remove_saved_access_link(self, page_id: str, grant_id: str) -> dict:
+        """Remove the saved invitation, preserving all guest authority.
+
+        A durable, credential-free marker precedes the page rewrite. All reads
+        and writes honor it, including stale policy rollback snapshots and
+        retries after a process exit between these two commits.
+        """
+        with self.authority_guard(write=True):
+            page = self._load_unlocked(page_id)
+            grant = next((g for g in page['access_grants'] if g['id'] == grant_id), None)
+            if grant is None:
+                raise PageNotFoundError(grant_id)
+            markers = self.directory / '.removed-links'
+            markers.mkdir(exist_ok=True)
+            markers.chmod(self.file_mode | ((self.file_mode & 0o444) >> 2))
+            marker = markers / grant['token_hash']
+            with marker.open('wb') as stream:
+                os.fchmod(stream.fileno(), self.file_mode)
+                stream.flush()
+                os.fsync(stream.fileno())
+            descriptor = os.open(markers, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            self._sync_directory()
+            self._write(self._path(page_id), page)
+            self._clean_staging_files()
+            return page
+
+    def recover_removed_links(self):
+        """Finish interrupted removals before the owner API starts."""
+        with self.authority_guard(write=True):
+            for path in self.directory.glob('*.json'):
+                page = self._load_unlocked(path.stem)
+                if any(g.get('saved_link_removed') for g in page['access_grants']):
+                    self._write(path, page)
+            self._clean_staging_files()
+
+    def _clean_staging_files(self):
+        # Called under the exclusive authority lock. These reserved filenames
+        # include the old NamedTemporaryFile scheme, even interrupted/partial JSON.
+        for path in self.directory.iterdir():
+            if path.name.startswith('.page-write-') or re.fullmatch(r'tmp[a-z0-9_]{8}', path.name):
+                path.unlink()
+        self._sync_directory()
 
     def remove_access_grant(self, page_id: str, grant_id: str) -> dict:
         """Remove one gateway access grant and return the updated page.
@@ -271,26 +326,30 @@ class PageStore:
 
     def _write(self, path: Path, page: dict) -> None:
         self.ensure_directory()
+        self._omit_removed_links(page)
         # Durable native intent precedes losing identifiers in single/bulk,
         # expiry, reset and page deletion. The callback never makes network IO.
         self._prepare_removed_grants(page["id"], page["access_grants"])
 
-        with NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=self.directory,
-            delete=False,
-        ) as temporary:
-            json.dump(page, temporary, indent=2)
-            temporary.write("\n")
-            temporary_path = Path(temporary.name)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-            os.fchmod(temporary.fileno(), self.file_mode)
+        temporary_path = None
+        try:
+            with NamedTemporaryFile(
+                "w", encoding="utf-8", dir=self.directory,
+                prefix='.page-write-', delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                json.dump(page, temporary, indent=2)
+                temporary.write("\n")
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                os.fchmod(temporary.fileno(), self.file_mode)
 
-        temporary_path.replace(path)
-        path.chmod(self.file_mode)
-        self._sync_directory()
+            temporary_path.replace(path)
+            path.chmod(self.file_mode)
+            self._sync_directory()
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
 
 def validate_page_id(page_id: str) -> str:
@@ -327,6 +386,7 @@ def validate_access_grants(raw_grants: object) -> list[dict]:
             "lifetime",
             "one_time_use",
             "access_link_url",
+            "saved_link_removed",
             "access_link_site",
             "resource_id",
             "access_link_id",
@@ -386,6 +446,7 @@ def validate_access_grants(raw_grants: object) -> list[dict]:
                 "lifetime": str(raw.get("lifetime", "")).strip()[:20],
                 "one_time_use": bool(raw.get("one_time_use", False)),
                 "access_link_url": str(raw.get("access_link_url", "")).strip(),
+                **({'saved_link_removed': True} if raw.get('saved_link_removed') is True else {}),
                 "access_link_site": str(raw.get("access_link_site", "")).strip(),
                 "resource_id": str(raw.get("resource_id", "")).strip(),
                 "access_link_id": str(raw.get("access_link_id", "")).strip(),
