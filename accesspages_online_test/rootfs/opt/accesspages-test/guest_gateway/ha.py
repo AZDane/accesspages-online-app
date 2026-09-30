@@ -2,6 +2,7 @@ import json
 import feature_policy
 import math
 from datetime import datetime, timezone
+from http.client import HTTPException
 import os
 from pathlib import Path
 from contextvars import ContextVar
@@ -101,6 +102,8 @@ CURATED_ACTIONS = {
 
 HIDDEN_STATES = {"unavailable", "unknown"}
 CAMERA_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+# This bounds the whole permission-filtered HA inventory, before page filtering.
+STATE_RESPONSE_MAX_BYTES = 32 * 1024 * 1024
 CAMERA_IMAGE_TYPES = frozenset({
     "image/jpeg",
     "image/jpg",
@@ -345,13 +348,17 @@ class HomeAssistantError(Exception):
         self.detail = detail
 
 
+class ActionDeadlineExpired(HomeAssistantError):
+    """Local guest authority expired, distinct from an upstream HTTP 401."""
+
+
 def validate_dispatch_deadline(value):
     try:
         deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if deadline.tzinfo is None or deadline <= datetime.now(timezone.utc):
             raise ValueError("Expired deadline")
     except (ValueError, TypeError, AttributeError, OverflowError) as error:
-        raise HomeAssistantError("Guest authorization expired before action dispatch", status=401) from error
+        raise ActionDeadlineExpired("Guest authorization expired before action dispatch", status=401) from error
 
 
 class HomeAssistantClient:
@@ -452,26 +459,47 @@ class HomeAssistantClient:
         try:
             # The base URL is administrator-controlled Home Assistant config.
             with urlopen(request, timeout=self.timeout) as response:  # nosec B310
-                body = response.read()
+                state_read = method == "GET" and path == "/api/states"
+                if state_read:
+                    length = response.headers.get("Content-Length")
+                    if length is not None:
+                        try:
+                            length = int(length)
+                        except ValueError as error:
+                            raise HomeAssistantError("Invalid HA state response length") from error
+                        if length < 0 or length > STATE_RESPONSE_MAX_BYTES:
+                            raise HomeAssistantError("HA state response is too large")
+                    body = response.read(STATE_RESPONSE_MAX_BYTES + 1)
+                    observed_at = datetime.now(timezone.utc).isoformat()
+                    if len(body) > STATE_RESPONSE_MAX_BYTES:
+                        raise HomeAssistantError("HA state response is too large")
+                    if length is not None and len(body) != length:
+                        raise HomeAssistantError("Incomplete HA state response")
+                else:
+                    body = response.read()
                 if not body:
                     return {}
-                return json.loads(body.decode("utf-8"))
+                result = json.loads(body.decode("utf-8"))
+                if state_read and isinstance(result, list):
+                    return StateSnapshot(result, observed_at)
+                return result
 
         except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
+            with error:
+                detail = error.read(65536).decode("utf-8", errors="replace")
             raise HomeAssistantError(
                 "Home Assistant returned an error",
                 status=error.code,
                 detail=detail,
             ) from error
 
-        except (URLError, TimeoutError, ConnectionError) as error:
+        except (URLError, TimeoutError, ConnectionError, HTTPException) as error:
             raise HomeAssistantError(
                 "Could not reach Home Assistant",
                 detail=str(getattr(error, "reason", type(error).__name__)),
             ) from error
 
-        except json.JSONDecodeError as error:
+        except (json.JSONDecodeError, UnicodeError, RecursionError) as error:
             raise HomeAssistantError(
                 "Home Assistant returned invalid JSON",
                 detail=str(error),
@@ -548,15 +576,21 @@ class HomeAssistantClient:
         entity_ids: set[str] | frozenset[str] | None = None,
     ) -> list[dict]:
         result = self._request("GET", "/api/states")
-        if not isinstance(result, list):
-            raise HomeAssistantError("Home Assistant returned an invalid state list")
-        if entity_ids is None:
-            return result
-        return [
-            state
+        if (not isinstance(result, list) or any(
+            not isinstance(state, dict)
+            or not isinstance(state.get("entity_id"), str)
+            or not isinstance(state.get("state"), str)
+            or not isinstance(state.get("attributes"), dict)
             for state in result
-            if state.get("entity_id") in entity_ids
+        )):
+            raise HomeAssistantError("Home Assistant returned an invalid state list")
+        # Direct HTTP reads carry their receipt time through filtering. In-memory
+        # clients observe their fresh result when the request returns.
+        observed_at = getattr(result, "observed_at", None) or datetime.now(timezone.utc).isoformat()
+        states = result if entity_ids is None else [
+            state for state in result if state["entity_id"] in entity_ids
         ]
+        return StateSnapshot(states, observed_at)
 
     def get_services(self) -> list[dict]:
         result = self._request("GET", "/api/services")

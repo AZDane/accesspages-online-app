@@ -27,17 +27,10 @@ RUN cd /build/frp \
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.25
+ARG BUILD_VERSION=0.1.0-beta.26
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online test" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
-COPY rootfs/opt/accesspages-test/guest_gateway/requirements.txt /tmp/guest-gateway-requirements.txt
 RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \
-    && apk add --no-cache --virtual .ha-dependency-build py3-pip \
-    && python3 -m pip install --no-cache-dir --no-deps \
-         --target "$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-         -r /tmp/guest-gateway-requirements.txt \
-    && apk del .ha-dependency-build \
-    && rm /tmp/guest-gateway-requirements.txt \
     && addgroup -g 2000 access-pages \
     && addgroup -g 2001 access-workers \
     && addgroup -g 2002 access-frontend \

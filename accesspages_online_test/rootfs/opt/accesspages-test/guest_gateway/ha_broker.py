@@ -10,7 +10,6 @@ import threading
 from datetime import datetime, timezone
 from broker_transport import peer_uid
 from guest_auth import GuestAuthority, GuestAuthorizationError
-from ha_snapshot import EntityStateFeed, MAX_ENTITIES
 import nhp
 import feature_policy
 from pathlib import Path
@@ -19,6 +18,7 @@ from ha import (
     CAMERA_IMAGE_TYPES,
     HomeAssistantClient,
     HomeAssistantError,
+    ActionDeadlineExpired,
     normalize_capabilities,
 )
 from pages import PageConfigError, PageNotFoundError, PageStore
@@ -26,6 +26,8 @@ from pages import PageConfigError, PageNotFoundError, PageStore
 
 HOST = os.getenv("HA_BROKER_HOST", "0.0.0.0")
 PORT = int(os.getenv("HA_BROKER_PORT", "8082"))
+MAX_STATE_ENTITIES = 256
+MAX_STATE_READERS = 8
 ADMIN_TOKEN = os.environ["HA_BROKER_ADMIN_TOKEN"]
 PAGE_STORE = PageStore(Path(os.getenv("HA_BROKER_POLICY_DIR", "/policy")))
 BACKEND = os.getenv("HA_BROKER_BACKEND", "homeassistant")
@@ -487,7 +489,7 @@ class GuestHandler(Handler):
 
     def _states(self, payload):
         requested = payload.get('entity_ids')
-        if (not isinstance(requested, list) or not requested or len(requested) > MAX_ENTITIES
+        if (not isinstance(requested, list) or not requested or len(requested) > MAX_STATE_ENTITIES
                 or not all(isinstance(item, str) for item in requested)):
             raise BrokerPolicyError('A bounded list of entity IDs is required')
         requested = set(requested)
@@ -495,12 +497,10 @@ class GuestHandler(Handler):
             page_id = self._state_authority(requested)
         # Policy writers and revocations must not wait for the network. These
         # states are not eligible for a response until authority is checked again.
-        key = (peer_uid(self.connection), page_id,
-               sha256(self.headers.get('X-Broker-Token', '').encode()).hexdigest(),
-               sha256(self.headers.get('X-Guest-Session', '').encode()).hexdigest(),
-               self.headers.get('X-NHP-Resource', ''))
+        if not self.server.state_readers.acquire(blocking=False):
+            raise HomeAssistantError('State reader is busy')
         try:
-            snapshot = self.server.snapshots.read(requested, demand_key=key)
+            snapshot = HA_CLIENT.get_states(requested)
             areas = HA_CLIENT.get_entity_areas() if feature_policy.limited() and (HA_CLIENT.include_areas or HA_CLIENT.exclude_areas) else {}
             with PAGE_STORE.authority_guard():
                 if self._state_authority(requested) != page_id:
@@ -508,10 +508,11 @@ class GuestHandler(Handler):
                 states = filter_authorized_states(requested, snapshot, areas)
                 self._send(200, {'states': states, 'observed_at': snapshot.observed_at})
         except (HomeAssistantError, GuestAuthorizationError, ValueError):
-            self.server.snapshots.withdraw(key)
             with PAGE_STORE.authority_guard():
                 self._state_authority(requested)
             raise
+        finally:
+            self.server.state_readers.release()
 
     def do_POST(self):
         try:
@@ -550,36 +551,21 @@ class GuestHandler(Handler):
             self._send(401, {'error': str(error)})
         except (BrokerPolicyError, ValueError) as error:
             self._send(getattr(error, 'status', 400), {'error': str(error) or 'Invalid request'})
-        except HomeAssistantError as error:
-            status = 401 if error.status == 401 else 502
-            self._send(status, {'error': 'Guest authorization expired' if status == 401 else 'Home Assistant failed'})
+        except ActionDeadlineExpired:
+            self._send(401, {'error': 'Guest authorization expired'})
+        except HomeAssistantError:
+            self._send(502, {'error': 'Home Assistant failed'})
 
 
 class GuestServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path, authority, registry, snapshots=None):
+    def __init__(self, path, authority, registry):
         self.authority = authority
         self.registry = Path(registry)
-        self.snapshots = snapshots if snapshots is not None else EntityStateFeed(HA_CLIENT, self.demand_entities)
+        self.state_readers = threading.BoundedSemaphore(MAX_STATE_READERS)
         super().__init__(str(path), GuestHandler)
         os.chmod(path, 0o660)
-
-    def demand_entities(self, key, requested):
-        uid, page_id, capability_hash, session_hash, resource = key
-        with PAGE_STORE.authority_guard():
-            record = json.loads(self.registry.read_text())[str(uid)]
-            page = _page(page_id)
-            if (record['page'] != page_id or record['capability_hash'] != capability_hash
-                    or page.get('instance_id', '') != record['instance_id']):
-                return set()
-            self.authority.authorize_digest(page_id, session_hash, resource)
-            feature_policy.validate_page(page)
-            return requested & {item['entity_id'] for item in page['resources']}
-
-    def server_close(self):
-        self.snapshots.close()
-        super().server_close()
 
 
 class HandoffHandler(Handler):
