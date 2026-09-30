@@ -293,6 +293,10 @@ class Runtime:
         os.chown(pages,USERS['admin'],GROUP);pages.chmod(0o2750)
         for page in pages.iterdir():
             if page.is_file():page.chmod(0o640)
+        # Startup resets Admin's tree to private modes. The broker must still
+        # traverse removal markers when loading any live grant after a restart.
+        markers=pages/'.removed-links'
+        if markers.exists():directory(markers,USERS['admin'],GROUP,0o750)
         # Only Admin and Broker can read grants; page workers receive projections.
         (ROOT/'admin').chmod(0o710)
         lock=pages/'.authority.lock'

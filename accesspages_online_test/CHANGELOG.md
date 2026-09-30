@@ -1,3 +1,9 @@
+## 0.1.0-beta.28
+
+- Fix existing guest sessions and guest-held invitations being rejected after an app restart following Finished Sharing.
+- Keep the saved invitation removed across restart while preserving guest access, expiry, verification requirements and identifier-based revocation.
+- Updating from beta.27 preserves enrollment, pages, grants and sessions. No additional OpenNHP Service cutover or invitation replacement is required for this correction.
+
 ## 0.1.0-beta.27
 
 - Require a coordinated Method Two update of OpenNHP Service and this app. Back up first, revoke every old local guest through Admin, preserve app data, and create fresh invitations only after both components are ready. Old invitations and sessions do not carry forward; see the [cutover guide](DOCS.md#updating-to-beta27-method-two).
