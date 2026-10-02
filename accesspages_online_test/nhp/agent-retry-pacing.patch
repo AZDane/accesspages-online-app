@@ -1,0 +1,12 @@
+--- a/endpoints/agent/knock.go
++++ b/endpoints/agent/knock.go
+@@ -26,6 +26,9 @@
+ 		// if cookie is required by server, use cookie to knock
+ 		// Note: don't use recursive calling method, it may get too deep if cookie message is kept sending
+ 		// use flat calling
++		// Construct a fresh RKN only after the unchanged Server receive floor.
++		// Delaying an already-built packet would leave its timestamp too close.
++		time.Sleep((core.MinimalRecvIntervalMs + 5) * time.Millisecond)
+ 		ackMsg, err = a.knockRequest(res, true)
+ 	}
+ 	// knockRequest has early-return paths (no cluster bound, no instance

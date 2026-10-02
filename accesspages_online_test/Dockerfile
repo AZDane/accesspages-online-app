@@ -11,6 +11,9 @@ RUN git clone https://github.com/OpenNHP/opennhp.git core \
 
 COPY nhp/native-payload-logging.patch nhp/patch-payload-logging.sh /build/
 RUN sh /build/patch-payload-logging.sh /build/core
+COPY nhp/agent-retry-pacing.patch /build/
+RUN cd /build/core && git apply --check /build/agent-retry-pacing.patch \
+    && git apply /build/agent-retry-pacing.patch
 COPY nhp/main.go /build/core/endpoints/accesspages_online_test/main.go
 RUN cd /build/core/endpoints \
     && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \

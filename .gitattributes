@@ -1,0 +1,2 @@
+# Unified patches require context spaces before tabs and on empty lines.
+accesspages_online_test/nhp/agent-retry-pacing.patch whitespace=-blank-at-eol,-space-before-tab
