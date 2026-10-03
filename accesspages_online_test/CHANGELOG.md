@@ -1,3 +1,9 @@
+## 0.1.0-beta.30
+
+- Use invitation-specific, pre-authorized native NHP keys carried by AccessLinks; guests knock without per-visit Agent registration.
+- Bind Google/email verification and admission to each independent visit while retaining the Gateway's separate GuestToken requirement.
+- Preserve Gateway enrollment and page configuration. This release requires the matching v3 OpenNHP Service and the coordinated guest-state cutover; obsolete v2 invitations and sessions are retired.
+
 ## 0.1.0-beta.29
 
 - Pace the existing native OpenNHP cookie retry in packaged `machinectl` and FRPC so fresh retry packets respect the Server's receive timing limit.
