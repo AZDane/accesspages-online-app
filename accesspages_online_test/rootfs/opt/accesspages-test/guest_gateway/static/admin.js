@@ -2262,7 +2262,7 @@ async function revokeGrant(grant) {
 
   const name = grant.label || "this access link";
   const confirmed = await confirmAction(
-    `Revoke ${name}? This guest's gateway access and OpenNHP Service AccessLink will stop working.`,
+    `Revoke ${name}? This guest will no longer have access to this Home Assistant installation.`,
   );
   if (!confirmed) return;
 
@@ -2274,21 +2274,6 @@ async function revokeGrant(grant) {
   );
   const data = await responseJson(response, "Could not revoke access link");
   if (!response.ok) {
-    if (data.local_access_revoked) {
-      currentPage.access_grants = (currentPage.access_grants || []).filter(
-        (item) => item.id !== grant.id,
-      );
-      await loadPages();
-      await loadGuestActivitySummaries(currentPage.id);
-      renderAccessGrants(currentPage);
-      setStatus(
-        `Gateway access was revoked, but OpenNHP Service revocation failed: ${
-          data.remote_error || data.error || "unknown error"
-        }`,
-        "error",
-      );
-      return;
-    }
     throw new Error(data.error || "Could not revoke access link");
   }
 
@@ -2299,7 +2284,7 @@ async function revokeGrant(grant) {
   await loadGuestActivitySummaries(currentPage.id);
   renderAccessGrants(currentPage);
   setStatus(
-    "This gateway token and OpenNHP Service AccessLink have been revoked. Other links are unchanged.",
+    "Access revoked. Other links are unchanged.",
     "success",
   );
 }
@@ -2582,18 +2567,10 @@ async function deletePage() {
     await loadPages();
     showDashboard();
     renderPageList();
-    if (data.remote_failures?.length) {
-      setStatus(
-        `Page deleted and local access revoked, but ${data.remote_failures.length} OpenNHP Service AccessLink ` +
-        `${data.remote_failures.length === 1 ? "revocation" : "revocations"} failed.`,
-        "error",
-      );
-    } else {
-      setStatus(
-        `Page deleted and ${userCount} ${userCount === 1 ? "guest link" : "guest links"} revoked.`,
-        "success",
-      );
-    }
+    setStatus(
+      `Page deleted and ${userCount} ${userCount === 1 ? "guest link" : "guest links"} revoked.`,
+      "success",
+    );
   } catch (error) {
     setStatus(`Error: ${error.message}`, "error");
   } finally {

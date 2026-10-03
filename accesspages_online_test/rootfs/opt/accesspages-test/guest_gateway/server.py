@@ -1497,6 +1497,9 @@ class Handler(BaseHTTPRequestHandler):
             except (PageConfigError, PageNotFoundError) as error:
                 self._send_page_error(error)
                 return
+            except (OSError, sqlite3.Error):
+                self._send_json(500, {"error": "Could not confirm local revocation; please retry"})
+                return
             try:
                 ACTIVITY_STORE.mark_revoked(page_id, grant)
             except (OSError, sqlite3.Error):
@@ -1507,59 +1510,17 @@ class Handler(BaseHTTPRequestHandler):
                     grant_id=grant_id,
                 )
 
-        # Disable local access first so revocation is immediate even if OpenNHP Service
-        # is temporarily unavailable. The OpenNHP Service DELETE endpoint revokes the
-        # remote AccessLink while retaining any history OpenNHP Service keeps for it.
-        access_link_id = grant.get("access_link_id", "")
-        remote_error = None
-        if not access_link_id:
-            remote_error = "Missing AccessLink ID; local access was revoked"
-        else:
-            try:
-                remote_already_missing = bool(ACCESS_SERVICE_CLIENT.delete_access_link(
-                    resource_id=grant.get("resource_id", ""),
-                    access_link_id=access_link_id,
-                    page_id=page_id,
-                    grant_id=grant_id,
-                ))
-            except AccessServiceError as error:
-                remote_error = str(error)
-                remote_already_missing = False
-        if not access_link_id:
-            remote_already_missing = False
-
+        # Durable intent and local removal are committed. Remote confirmation is
+        # deliberately outside this request; the existing worker owns cleanup.
         audit(
-            "access_grant_revoked",
-            page_id=page_id,
-            grant_id=grant_id,
-            access_link_id=access_link_id,
-            remote_revoked=not remote_error,
-            remote_already_missing=remote_already_missing,
+            "access_grant_revoked", page_id=page_id, grant_id=grant_id,
+            access_link_id=grant.get("access_link_id", ""),
+            local_revoked=True, remote_cleanup="asynchronous",
         )
-
-        if remote_error:
-            self._send_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "success": False,
-                    "local_access_revoked": True,
-                    "remote_access_revoked": False,
-                    "grant_id": grant_id,
-                    "remote_error": remote_error,
-                },
-            )
-            return
-
-        self._send_json(
-            200,
-            {
-                "success": True,
-                "local_access_revoked": True,
-                "remote_access_revoked": True,
-                "remote_already_missing": remote_already_missing,
-                "grant_id": grant_id,
-            },
-        )
+        self._send_json(200, {
+            "success": True, "local_access_revoked": True,
+            "remote_cleanup": "asynchronous", "grant_id": grant_id,
+        })
 
     def _revoke_all_grants(self, page_id):
         with page_action_lock(page_id):
@@ -1570,11 +1531,13 @@ class Handler(BaseHTTPRequestHandler):
             grants = list(page["access_grants"])
             revoked_count = len(grants)
 
-            # Disable local access first so revocation is immediate even if
-            # OpenNHP Service is temporarily unavailable. Remote failures are reported
-            # without restoring local access.
+            # PageStore persists remote intent before committing local denial.
             page["access_grants"] = []
-            PAGE_STORE.replace(page_id, page)
+            try:
+                PAGE_STORE.replace(page_id, page)
+            except (OSError, sqlite3.Error):
+                self._send_json(500, {"error": "Could not confirm local revocation; please retry"})
+                return
             for grant in grants:
                 try:
                     VERIFICATION_STORE.revoke(page_id, grant["id"])
@@ -1591,42 +1554,19 @@ class Handler(BaseHTTPRequestHandler):
                         grant_id=grant["id"],
                     )
 
-        remote_failures = []
-        for grant in grants:
-            access_link_id = grant.get("access_link_id", "")
-            if not access_link_id:
-                remote_failures.append({
-                    "grant_id": grant["id"],
-                    "error": "Missing AccessLink ID; local access was revoked",
-                })
-                continue
-            try:
-                ACCESS_SERVICE_CLIENT.delete_access_link(
-                    resource_id=grant.get("resource_id", ""),
-                    access_link_id=access_link_id,
-                    page_id=page_id,
-                    grant_id=grant["id"],
-                )
-            except AccessServiceError as error:
-                remote_failures.append({
-                    "grant_id": grant["id"],
-                    "access_link_id": access_link_id,
-                    "error": str(error),
-                })
-
         audit(
             "access_links_revoked",
             page_id=page_id,
             revoked_count=revoked_count,
-            remote_failure_count=len(remote_failures),
+            remote_cleanup="asynchronous",
         )
         self._send_json(
-            HTTPStatus.BAD_GATEWAY if remote_failures else 200,
+            200,
             {
-                "success": not remote_failures,
+                "success": True,
                 "local_access_revoked": True,
                 "revoked_count": revoked_count,
-                "remote_failures": remote_failures,
+                "remote_cleanup": "asynchronous",
             },
         )
 

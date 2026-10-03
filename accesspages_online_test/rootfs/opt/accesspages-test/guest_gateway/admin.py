@@ -477,26 +477,13 @@ def handle_delete(handler, path, runtime):
                         operation="delete_page",
                         page_id=page_id,
                     )
-            remote_failures = []
-            for grant in grants:
-                access_link_id = grant.get("access_link_id", "")
-                if not access_link_id:
-                    remote_failures.append({"grant_id": grant["id"], "error": "Missing AccessLink ID"})
-                    continue
-                try:
-                    runtime.ACCESS_SERVICE_CLIENT.delete_access_link(
-                        resource_id=grant.get("resource_id", ""),
-                        access_link_id=access_link_id,
-                        page_id=page_id,
-                        grant_id=grant["id"],
-                    )
-                except runtime.AccessServiceError as error:
-                    remote_failures.append({"grant_id": grant["id"], "error": str(error)})
-            runtime.audit("page_deleted", page_id=page_id, remote_failure_count=len(remote_failures))
-            handler._send_json(
-                runtime.HTTPStatus.BAD_GATEWAY if remote_failures else 200,
-                {"success": not remote_failures, "page_deleted": True, "remote_failures": remote_failures},
-            )
+            runtime.audit("page_deleted", page_id=page_id, remote_cleanup="asynchronous")
+            handler._send_json(200, {
+                "success": True, "page_deleted": True, "local_access_revoked": True,
+                "remote_cleanup": "asynchronous",
+            })
+        except (OSError, runtime.sqlite3.Error):
+            handler._send_json(500, {"error": "Could not confirm local revocation; please retry"})
         except (runtime.PageConfigError, runtime.PageNotFoundError) as error:
             handler._send_page_error(error)
         except runtime.PolicyPublishError as error:
