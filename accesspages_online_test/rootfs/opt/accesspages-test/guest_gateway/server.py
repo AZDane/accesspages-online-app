@@ -91,7 +91,7 @@ from pages import (
     PageConfigError,
     PageNotFoundError,
     PageStore,
-    page_admin_view,  # noqa: F401 - exported through the shared route runtime
+    page_admin_view as stored_page_admin_view,
     validate_notifications,
 )
 from policy import (
@@ -100,6 +100,10 @@ from policy import (
 )
 from verification import VerificationStore
 import nhp
+
+
+def page_admin_view(page):
+    return {**stored_page_admin_view(page), 'invitation_ready': nhp.invitation_ready(page)}
 
 
 PROXIMITY_READING_MAX_AGE_SECONDS = 300
