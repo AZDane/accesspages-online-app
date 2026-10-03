@@ -73,7 +73,7 @@ class GuestAuthority:
         if not isinstance(token, str) or len(token) > 4096:
             raise ValueError('Invalid handoff')
         prefix, body, signature = token.split('.')
-        if prefix != 'nhp-guest-v2':
+        if prefix != 'nhp-guest-v3':
             raise ValueError('Invalid handoff')
         decode = lambda value: base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
         key = base64.b64decode(Path(os.environ['NHP_VERIFY_KEY_FILE']).read_text())
@@ -92,13 +92,20 @@ class GuestAuthority:
             raise ValueError('Invalid gateway epoch')
         return claims, gateway_id, epoch
 
-    def redeem(self, token, guest_token, origin, frontend_resource):
+    def redeem(self, token, guest_token, attempt_secret, origin, frontend_resource):
         try:
             if origin != nhp.LANDING_ORIGIN:
                 raise ValueError('Origin rejected')
             claims, gateway_id, epoch = self.verify(token)
             if not isinstance(guest_token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', guest_token):
                 raise ValueError('GuestToken required')
+            if not isinstance(attempt_secret,str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',attempt_secret):
+                raise ValueError('Attempt proof required')
+            commitment=hashlib.sha256(('access-pages-attempt-v3\0'+attempt_secret).encode()).hexdigest()
+            if not isinstance(claims.get('attempt_hash'),str) or not hmac.compare_digest(commitment,claims['attempt_hash']):
+                raise ValueError('Wrong attempt proof')
+            if not isinstance(claims.get('invitation_id'),str) or not re.fullmatch(r'[a-f0-9]{64}',claims['invitation_id']):
+                raise ValueError('Invalid invitation identifier')
             digest = hashlib.sha256(guest_token.encode()).hexdigest()
             if not hmac.compare_digest(digest, claims['guest_token_hash']):
                 raise ValueError('GuestToken does not match admission')
@@ -111,7 +118,7 @@ class GuestAuthority:
                 for item in self.pages.list_pages():
                     page = self.pages.load(item['id'])
                     for grant in page['access_grants']:
-                        if hmac.compare_digest(grant['token_hash'], digest) and grant_expiry(grant) > now:
+                        if (grant.get('invitation_state')=='ready' and grant.get('access_link_id')==claims['invitation_id'] and hmac.compare_digest(grant['token_hash'], digest) and grant_expiry(grant) > now):
                             if match is not None:
                                 raise ValueError('Ambiguous grant')
                             match = (page, grant)
@@ -158,7 +165,7 @@ class GuestAuthority:
             if row['resource'] != nhp.resource_for_grant(page_id, page.get('instance_id', ''), row['token_hash']):
                 raise ValueError('Page route changed')
             grant = next((g for g in page['access_grants'] if g['id'] == row['grant_id']), None)
-            if (grant is None or grant_expiry(grant) <= time.time()
+            if (grant is None or grant.get('invitation_state')!='ready' or grant_expiry(grant) <= time.time()
                     or grant['token_hash'] != row['token_hash'] or policy_hash(grant) != row['policy_hash']):
                 raise ValueError('Guest authorization changed')
             return {'grant': {k: v for k, v in grant.items() if k != 'token_hash'},

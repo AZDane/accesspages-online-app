@@ -209,10 +209,9 @@ class PageStore:
             self._clean_staging_files()
 
     def _clean_staging_files(self):
-        # Called under the exclusive authority lock. These reserved filenames
-        # include the old NamedTemporaryFile scheme, even interrupted/partial JSON.
+        # Called under the exclusive authority lock, including for partial JSON.
         for path in self.directory.iterdir():
-            if path.name.startswith('.page-write-') or re.fullmatch(r'tmp[a-z0-9_]{8}', path.name):
+            if path.name.startswith('.page-write-'):
                 path.unlink()
         self._sync_directory()
 
@@ -390,6 +389,7 @@ def validate_access_grants(raw_grants: object) -> list[dict]:
             "access_link_site",
             "resource_id",
             "access_link_id",
+            "invitation_state",
             "type",
             "verification_required",
             "verification_method",
@@ -451,6 +451,7 @@ def validate_access_grants(raw_grants: object) -> list[dict]:
                 "resource_id": str(raw.get("resource_id", "")).strip(),
                 "access_link_id": str(raw.get("access_link_id", "")).strip(),
                 "type": str(raw.get("type", "")).strip(),
+                **({"invitation_state": raw["invitation_state"]} if raw.get("invitation_state") in ("pending", "ready") else {}),
                 "verification_required": bool(raw.get("verification_required", False)),
                 **{key: str(raw[key]) for key in ("verification_method", "verification_email") if key in raw},
                 "notifications": validate_notifications(raw.get("notifications")),
@@ -675,6 +676,8 @@ def validate_page(payload: object, required_id: str | None = None) -> dict:
 
 
 def grant_admin_view(grant: dict) -> dict:
+    if grant.get("type")=="nhp" and grant.get("invitation_state")!="ready":
+        grant={**grant,"access_link_url":""}
     return {
         key: value
         for key, value in grant.items()
