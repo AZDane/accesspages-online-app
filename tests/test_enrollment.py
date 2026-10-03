@@ -145,21 +145,26 @@ class EnrollmentTests(unittest.TestCase):
             atomic(binding, json.dumps({'gateway_id': GATEWAY, 'route': {'epoch': 1}}))
             atomic(routes, json.dumps({'gateway_id': GATEWAY, 'epoch': 1, 'isolation': 'page',
                                       'resources': [{'page_id': 'front-door', 'instance_id': '', 'guest_hash': '', 'resource_id': resource}]}))
-            link = LANDING+'/#'+TOKEN
+            delivery = {
+                'private_key': 'Nm6FyA9B_gz62XMwvRN26sEYs-4Z8dG9UAG2Mjtkcys',
+                'public_key': 'G7sJlz8MzcfyWH9jsDJDV6nEHuVMobOSE3pHMMFPHio=',
+                'invitation_id': '545cd03857dfe54315b91661ea421411808ad60f5d873805cd42b6523b3f904d',
+                'landing_url': nhp.LANDING_ORIGIN+'/', 'expires': 1900000000,
+            }
             calls = []
             def operation(body):
                 calls.append(body)
                 if body['op'] == 'revoke_link':
                     return {'state': 'revoked', 'network_admission_update': 'applied'}
-                return {'access_link': link, 'expires': 1900000000}
+                return delivery
             with patch.object(nhp, 'machine', side_effect=operation), patch.dict(os.environ, {'NHP_BINDING_FILE': str(binding), 'NHP_ROUTES_FILE': str(routes)}):
                 client = nhp.NHPClient()
                 result = client.create_access_link(target_path='/access/front-door?access_token='+'G'*43, expires_in='1h')
-                self.assertEqual(result['access_link_url'], LANDING+'/#v2.'+TOKEN+'.'+'G'*43)
+                self.assertEqual(result['access_link_url'], delivery['landing_url']+'#v3.'+delivery['private_key']+'.'+'G'*43)
                 self.assertEqual(calls[0]['guest_token_hash'], hashlib.sha256(('G'*43).encode()).hexdigest())
                 self.assertNotIn('guest_token', calls[0])
                 self.assertEqual(calls[0]['resource'], resource)
-                self.assertEqual(result['access_link_id'], hashlib.sha256(TOKEN.encode()).hexdigest())
+                self.assertEqual(result['access_link_id'], delivery['invitation_id'])
                 client.delete_access_link(access_link_id=result['access_link_id'])
                 self.assertEqual(calls[-1], {'op': 'revoke_link', 'access_link_id': result['access_link_id'], 'defer_transport': 15})
                 with nhp.revocation_db() as database:
