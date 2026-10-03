@@ -1371,6 +1371,7 @@ class Handler(BaseHTTPRequestHandler):
             "resource_id": access_link.get("resource_id", "") or ACCESS_SERVICE_CLIENT.resource_id,
             "access_link_id": access_link.get("access_link_id", ""),
             "type": access_link.get("type", ""),
+            **({"invitation_state": "pending"} if nhp.ENABLED else {}),
             "verification_required": verification_required,
             "notifications": notifications or {"targets": [], "events": []},
             "target_path_applied": bool(access_link.get("target_path_applied", False)),
@@ -1403,6 +1404,12 @@ class Handler(BaseHTTPRequestHandler):
                 # The supervisor reads grants and pending intents under this same
                 # lock, so it cannot observe a gap between provisioning and commit.
                 nhp.route_reservations.cancel(os.environ['GATEWAY_DATA_DIR'], grant['token_hash'])
+        if nhp.ENABLED:
+            try:
+                grant = ACCESS_SERVICE_CLIENT.activate_access_link(PAGE_STORE, page_id, grant_id)
+            except AccessServiceError as error:
+                self._send_access_service_error(error)
+                return
         try:
             ACTIVITY_STORE.register_guest(page_id, grant)
         except (OSError, sqlite3.Error):
