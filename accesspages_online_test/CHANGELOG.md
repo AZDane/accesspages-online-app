@@ -1,3 +1,8 @@
+## 0.1.0-beta.31
+
+- Wait for the current page route to be ready before enabling guest invitation creation, preventing the page-creation readiness race.
+- Add Check readiness while preserving the entered invitation form; recheck before submission and retain independent server-side route enforcement.
+
 ## 0.1.0-beta.30
 
 - Use invitation-specific, pre-authorized native NHP keys carried by AccessLinks; guests knock without per-visit Agent registration.
