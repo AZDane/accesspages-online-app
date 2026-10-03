@@ -1,3 +1,8 @@
+## 0.1.0-beta.29
+
+- Pace the existing native OpenNHP cookie retry in packaged `machinectl` and FRPC so fresh retry packets respect the Server's receive timing limit.
+- Updating from beta.28 preserves enrollment, pages, invitations, verification requirements and guest sessions. No invitation replacement or OpenNHP Service cutover is required.
+
 ## 0.1.0-beta.28
 
 - Fix existing guest sessions and guest-held invitations being rejected after an app restart following Finished Sharing.
