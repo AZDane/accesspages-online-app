@@ -48,6 +48,18 @@ def resource_for_grant(page, instance_id=None, token_hash=''):
     value = PAGE_RESOURCES.get(page, RESOURCE)
     return value if isinstance(value, str) and value else RESOURCE
 
+def invitation_ready(page):
+    """Current route prerequisite for issuing a link, not installation health."""
+    if not ENABLED or not INSTALLATION_ROUTING:
+        return True
+    try:
+        if route_manifest()['isolation'] == 'page':
+            resource_for_grant(page['id'], page['instance_id'])
+        # Guest isolation establishes its route during invitation creation.
+        return True
+    except (AccessServiceError, OSError, ValueError, KeyError, TypeError):
+        return False
+
 def origin_for_resource(resource):
     if INSTALLATION_ROUTING:
         matches = [r for r in route_manifest()['resources'] if r['resource_id'] == resource]

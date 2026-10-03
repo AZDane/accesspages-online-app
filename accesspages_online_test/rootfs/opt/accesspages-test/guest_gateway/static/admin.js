@@ -149,6 +149,9 @@ const customLifetimeUnit = document.getElementById(
 );
 const lifetimeLimit = document.getElementById("lifetime-limit");
 const generateAccessLinkButton = document.getElementById("generate-access_link");
+const invitationReadiness = document.getElementById("invitation-readiness");
+const checkInvitationReadiness = document.getElementById("check-invitation-readiness");
+let invitationReadinessRequest = 0;
 const revokeAccessLinksButton = document.getElementById("revoke-access_links");
 const access_linkResult = document.getElementById("access_link-result");
 const grantList = document.getElementById("grant-list");
@@ -2037,6 +2040,36 @@ async function deleteSelectedActivity() {
   setStatus("Revoked guest and activity history deleted.", "success");
 }
 
+async function refreshInvitationReadiness() {
+  const page = currentPage;
+  const request = ++invitationReadinessRequest;
+  const current = () => currentPage === page && request === invitationReadinessRequest && userDialog.open;
+  generateAccessLinkButton.disabled = true;
+  checkInvitationReadiness.disabled = true;
+  invitationReadiness.textContent = "Checking this page…";
+  if (page) page.invitation_ready = false;
+  try {
+    if (!page || !editingExisting) return false;
+    const response = await adminApi.fetch(`api/admin/pages/${encodeURIComponent(page.id)}`, {cache: "no-store"});
+    const data = await responseJson(response, "Could not check this page");
+    if (!current()) return false;
+    if (!response.ok) throw new Error();
+    page.invitation_ready = data.invitation_ready === true;
+    invitationReadiness.textContent = page.invitation_ready
+      ? "Ready to create a guest link."
+      : "This page is still being prepared. Check readiness before creating a guest link.";
+    return page.invitation_ready;
+  } catch (_error) {
+    if (current()) invitationReadiness.textContent = "Could not check this page. Check readiness again.";
+    return false;
+  } finally {
+    if (current()) {
+      checkInvitationReadiness.disabled = false;
+      generateAccessLinkButton.disabled = page?.invitation_ready !== true;
+    }
+  }
+}
+
 function openUserDialog() {
   sendInvitationEmailInput.checked = false;
   invitationEmailInput.value = "";
@@ -2051,6 +2084,7 @@ function openUserDialog() {
   setUserDialogStatus("");
   access_linkResult.classList.add("hidden");
   userDialog.showModal();
+  void refreshInvitationReadiness();
   void loadVerificationStatus();
   access_linkLabelInput.focus();
 }
@@ -2116,7 +2150,9 @@ async function generateAccessLink() {
     }
   }
 
+  if (!await refreshInvitationReadiness()) return;
   generateAccessLinkButton.disabled = true;
+  checkInvitationReadiness.disabled = true;
   setUserDialogStatus(`Creating access for ${userName}…`);
   try {
     const response = await adminApi.fetch(
@@ -2217,7 +2253,7 @@ async function generateAccessLink() {
   } catch (error) {
     setUserDialogStatus(`Error: ${error.message}`, "error");
   } finally {
-    generateAccessLinkButton.disabled = false;
+    await refreshInvitationReadiness();
   }
 }
 
@@ -2656,6 +2692,7 @@ editorUsersBottomButton.addEventListener("click", () => {
   if (currentPage) manageUsers(currentPage.id);
 });
 addUserButton.addEventListener("click", openUserDialog);
+checkInvitationReadiness.addEventListener("click", refreshInvitationReadiness);
 closeUserDialogButton.addEventListener("click", () => userDialog.close());
 closeActivityDialogButton.addEventListener(
   "click",
