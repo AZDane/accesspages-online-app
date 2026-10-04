@@ -1,3 +1,8 @@
+## 0.1.0-beta.32
+
+- Confirm guest revocation as soon as local access is durably removed, without waiting for hosted or native cleanup.
+- Continue remote cleanup through the existing durable worker and restart recovery; report local storage failures without claiming success.
+
 ## 0.1.0-beta.31
 
 - Wait for the current page route to be ready before enabling guest invitation creation, preventing the page-creation readiness race.
