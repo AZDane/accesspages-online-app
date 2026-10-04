@@ -188,4 +188,6 @@ The app uses its own Supervisor HA API at `http://supervisor/core`. No credentia
 
 The current scope remains sensors, binary sensors and lights (on/off and validated brightness); cameras, proximity and other actionable domains remain disabled. Configure `include_domains`, `include_areas`, `exclude_domains` and `exclude_entities` to narrow discovery, then select exact entities/actions in Admin. The underlying HA token is not an entity-scoped token; page/broker policy enforces the guest boundary.
 
-Guest revocation denies reads/actions immediately. The loaded page can show the explicit denial during the fixed 15-second transport grace, then NHP/AC withdraws transport. Normal polling remains about 3 seconds with a 10-second request deadline.
+Guest revocation reports **Access revoked** once the app has durably removed local access. Existing guest sessions, reads/actions and new handoffs are denied by the local grant checks. Remote cleanup continues through the existing durable worker, including after restart, without delaying that success message. A local storage failure is reported as an error. Connection reset retains its separate lifecycle behavior.
+
+Remote transport withdrawal can lag local denial during an outage. The fixed 15-second transport grace starts when remote revocation is processed; the loaded guest page can show explicit denial while transport remains available. Normal polling remains about 3 seconds with a 10-second request deadline.
