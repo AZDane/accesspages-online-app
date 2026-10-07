@@ -57,3 +57,9 @@ and startup progress. Failed enrollment restores the input.
 
 The offline tests use synthetic data. Do not upload enrollment credentials, AccessLinks, guest
 sessions or home test targets to GitHub secrets, workflow inputs, logs or artifacts.
+
+## Ownership
+
+Access Pages LLC owns the founder-owned Access Pages intellectual property
+assigned to it by John Raahauge. Third-party and contributor-owned material
+remains subject to its existing ownership and licenses.
