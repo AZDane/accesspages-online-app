@@ -1,3 +1,7 @@
+## Updating to beta.33
+
+The service addresses now use `accesspages.app`. Update every installation after the hosted migration, preserving app data. The old default Server address is migrated automatically; existing identities, private keys and page settings are retained when the service trust anchors match. The app obtains a certificate for its new installation address. Do not reset or reinstall. New guest links use `https://access.accesspages.app/`; replace older invitations if needed.
+
 # Access Pages Online — Home Assistant app
 
 The app connects directly to its Home Assistant installation. Guest access uses the NHP/AC/FRP architecture; only the local HA broker receives Home Assistant credentials.

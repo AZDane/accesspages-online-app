@@ -10,6 +10,10 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
 
+OLD_SERVER = 'nhp.beta.accesspages.app:62206'
+NEW_SERVER = 'nhp.accesspages.app:62206'
+TRUST_FIELDS = ('server_public_key', 'handoff_public_key', 'control_certificate', 'frp_certificate')
+
 
 def atomic(path, value, mode=0o600):
     path = Path(path)
@@ -34,6 +38,10 @@ class Installation:
         profile = self.profile()
         expected = profile['server_host'] + ':' + str(profile['server_port'])
         self.server_address = server_address or os.getenv('NHP_SERVER_ADDRESS') or expected
+        # Only the packaged, pinned service can authorize this exact rename.
+        # Existing HA options may retain the old default across an app update.
+        if self.server_address == OLD_SERVER and expected == NEW_SERVER:
+            self.server_address = expected
         # An address selects a pinned native authority, never an HTTP discovery endpoint.
         if self.server_address != expected:
             raise ValueError('NHP Server address does not match the trusted bootstrap settings')
@@ -42,9 +50,30 @@ class Installation:
             binding = json.loads(binding_path.read_text())
             if 'server_address' in binding:
                 if binding['server_address'] != self.server_address:
-                    raise ValueError('NHP Server address does not match this enrolled installation')
+                    self.migrate_domain(binding, profile)
             else:
                 self.migrate_binding(binding, profile)
+
+    def migrate_domain(self, binding, current):
+        """Move the known service address without replacing an enrolled identity."""
+        if (binding['server_address'] != OLD_SERVER or self.server_address != NEW_SERVER
+                or current.get('landing_origin') != 'https://access.accesspages.app'):
+            raise ValueError('NHP Server address does not match this enrolled installation')
+        try:
+            previous = json.loads((self.root/'profile.json').read_text())
+        except (OSError, ValueError):
+            raise ValueError('Saved service trust is unavailable for the domain migration') from None
+        if (not isinstance(previous, dict)
+                or previous.get('server_host') != OLD_SERVER.split(':')[0]
+                or previous.get('server_port') != 62206
+                or previous.get('landing_origin') != 'https://access.beta.accesspages.app'
+                or any(not previous.get(k) or previous[k] != current.get(k) for k in TRUST_FIELDS)):
+            raise ValueError('NHP Server address does not match this enrolled installation')
+        # Commit the binding first. If interrupted, normal startup refreshes the
+        # saved public profile and native endpoints before making any operation.
+        binding['server_address'] = self.server_address
+        atomic(self.root/'binding.json', json.dumps(binding))
+        self.refresh_authority()
 
     def migrate_binding(self, binding, current):
         """Preserve existing keys only when packaged bootstrap matches saved trust."""
@@ -52,8 +81,7 @@ class Installation:
         saved = binding.get('service_url', previous.get('landing_origin'))
         if not saved or saved not in (previous.get('landing_origin'), previous.get('service_origin')):
             raise ValueError('Saved service address does not match this enrolled installation')
-        anchors = ('server_public_key', 'handoff_public_key', 'control_certificate', 'frp_certificate')
-        if any(not previous.get(name) or previous[name] != current.get(name) for name in anchors):
+        if any(not previous.get(name) or previous[name] != current.get(name) for name in TRUST_FIELDS):
             raise ValueError('Native bootstrap settings changed an authority key')
         if previous.get('landing_origin') != current['landing_origin']:
             raise ValueError('Native bootstrap settings changed the guest landing')
@@ -242,9 +270,16 @@ Port = 62206
             atomic(key_path,key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode())
         key=serialization.load_pem_private_key(key_path.read_bytes(),password=None)
         csr_path=self.root/'guest.csr'
-        if not csr_path.exists():
+        names=['*.'+host.split('.',1)[1]]
+        # A signed installation route can change the certificate hostname during
+        # a service-domain migration. Preserve the TLS key, replace the old CSR.
+        previous_names = None
+        if csr_path.exists():
+            previous_csr=x509.load_pem_x509_csr(csr_path.read_bytes())
+            previous_names=previous_csr.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+        if previous_names != names:
             csr=x509.CertificateSigningRequestBuilder().subject_name(x509.Name([])).add_extension(
-                x509.SubjectAlternativeName([x509.DNSName('*.'+host.split('.',1)[1])]),critical=False).sign(key,hashes.SHA256())
+                x509.SubjectAlternativeName([x509.DNSName(n) for n in names]),critical=False).sign(key,hashes.SHA256())
             atomic(csr_path,csr.public_bytes(serialization.Encoding.PEM).decode())
         result=self.operation({'op':'request_certificate','csr':csr_path.read_text()})
         if result.get('pending'):

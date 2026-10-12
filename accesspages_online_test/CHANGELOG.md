@@ -1,3 +1,10 @@
+## 0.1.0-beta.33
+
+- Move service and installation addresses from `beta.accesspages.app` to `accesspages.app`.
+- Automatically migrate the previous default Server address while preserving enrolled identities, private keys and page settings when the packaged trust anchors match.
+- Request a new installation certificate when its assigned hostname changes, retaining the TLS private key.
+- Requires the coordinated hosted domain migration. Update every installation and preserve app data; do not reset or reinstall. Replace guest invitations if their old addresses no longer work.
+
 ## 0.1.0-beta.32
 
 - Confirm guest revocation as soon as local access is durably removed, without waiting for hosted or native cleanup.

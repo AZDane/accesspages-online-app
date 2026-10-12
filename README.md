@@ -21,6 +21,10 @@ This is a beta for dedicated test installations. A successful container test doe
 
 See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages_online_test/CHANGELOG.md).
 
+## Updating to beta.33
+
+The service addresses now use `accesspages.app`. Update every installation after the hosted migration, preserving app data. The old default Server address is migrated automatically; existing identities, private keys and page settings are retained when the service trust anchors match. The app obtains a certificate for its new installation address. Do not reset or reinstall. New guest links use `https://access.accesspages.app/`; replace older invitations if needed.
+
 ## Updating
 
 Beta.28 fixes guest access after an app restart following Finished Sharing.
