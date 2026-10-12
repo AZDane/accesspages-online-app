@@ -1,3 +1,10 @@
+## 0.1.0-beta.35
+
+- Rename the app to Access Pages Online and use the existing Access Pages icon in the app list. Keep the standard shield/key sidebar icon.
+- Prevent a failing service revocation from blocking cleanup of later revoked AccessLinks. Local guest access stays revoked while service cleanup retries.
+- Remove the temporary beta.26 guest-state repair screen and helper. Already repaired installations retain their pages, settings and keys.
+- If an installation still has unrepaired beta.26 guest state, repair it with beta.34 before updating. Do not reset or reinstall to upgrade.
+
 ## 0.1.0-beta.34
 
 - Replace the endless Connecting screen after a beta.26 upgrade with an explicit **Repair older guest access** flow.

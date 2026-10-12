@@ -196,7 +196,9 @@ Guest revocation reports **Access revoked** once the app has durably removed loc
 
 Remote transport withdrawal can lag local denial during an outage. The fixed 15-second transport grace starts when remote revocation is processed; the loaded guest page can show explicit denial while transport remains available. Normal polling remains about 3 seconds with a 10-second request deadline.
 
-## Stuck connecting after updating from beta.26
+## Historical beta.26 repair requirement
+
+Beta.35 and later no longer contain the temporary repair flow. Already repaired installations can update normally and retain their data. An unrepaired beta.26 installation must complete the repair using beta.34 first.
 
 Update to beta.34, then open the app through Home Assistant. If **Repair older guest access** appears, read the explanation, confirm removal of old guest access and choose **Back up and repair**. The app saves a private local backup before retiring the obsolete invitations and sessions on that installation. Your pages, settings, enrollment and private keys stay in place. Invite guests again after it finishes connecting. Do not uninstall, reset or request another enrollment code.
 

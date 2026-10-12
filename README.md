@@ -8,7 +8,7 @@ The app connects to Home Assistant and supports selected sensors, binary sensors
 
 1. In Home Assistant, open **Settings → Apps → App store → Repositories** (older versions call these add-ons).
 2. Add `https://github.com/AZDane/accesspages-online-app`.
-3. Install **Access Pages Online test**, start it, and choose **Open web UI**.
+3. Install **Access Pages Online**, start it, and choose **Open web UI**.
 4. Paste the private, single-use enrollment API token supplied by the beta operator. The hosted beta must be running before enrollment can complete. After connecting, select the entities and controls guests may use on each page. See [the app guide](accesspages_online_test/DOCS.md) for discovery filters and resource isolation.
 
 The initial installation builds pinned OpenNHP/NHP-FRP source and can take several minutes. Supported architectures are amd64 and aarch64. No router port forwarding or manually assembled keys, hostnames or tunnel credentials are required.
