@@ -1,7 +1,7 @@
-name: Access Pages Online test
+name: Access Pages Online
 slug: accesspages_online_test
 description: Share selected sensors and lights through an OpenNHP Guest Gateway
-version: 0.1.0-beta.34
+version: 0.1.0-beta.35
 stage: experimental
 startup: application
 boot: auto
@@ -27,3 +27,4 @@ schema:
   include_areas: str?
   exclude_domains: str?
   exclude_entities: str?
+panel_title: Access Pages Online

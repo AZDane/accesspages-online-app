@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timezone
 from access_service import AccessServiceError
+from audit import audit
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from pages import validate_page_id
@@ -103,7 +104,13 @@ def machine(body):
         raise AccessServiceError('NHP Server is unavailable; the operation can be retried') from error
     if result.returncode:
         raise AccessServiceError('NHP Server denied the operation or is unavailable')
-    return json.loads(result.stdout)
+    try:
+        response = json.loads(result.stdout)
+        if not isinstance(response, dict):
+            raise ValueError('Object required')
+    except ValueError as error:
+        raise AccessServiceError('NHP Server response was not confirmed; the operation can be retried') from error
+    return response
 
 def db(name):
     path=Path(os.environ['GATEWAY_DATA_DIR']) / (name+'.db')
@@ -222,6 +229,21 @@ class NHPClient:
         return False
 
 _revocation_lock=threading.Lock()
+_revocation_cursor=0
+_revocation_warning_at=None
+
+def _report_revocation_retry(completed, remaining, failures):
+    global _revocation_warning_at
+    if completed:
+        audit('service_revocations_completed', completed=completed, remaining=remaining)
+    if failures:
+        now=time.monotonic()
+        if _revocation_warning_at is None or now-_revocation_warning_at>=60:
+            # Never include invitation IDs, helper output, credentials or page contents.
+            audit('service_revocations_pending', remaining=remaining, reasons=sorted(failures))
+            _revocation_warning_at=now
+    elif not remaining:
+        _revocation_warning_at=None
 
 @contextmanager
 def revocation_db():
@@ -253,19 +275,38 @@ def _send_revocation(ident):
         c.execute('DELETE FROM links WHERE id=?',(ident,))
 
 def retry_revocations(page_store=None):
+    global _revocation_cursor
     if not _revocation_lock.acquire(blocking=False):return
     try:
         with revocation_db() as c:
-            rows=c.execute('SELECT id,page,grant_id FROM pending_revocations ORDER BY rowid LIMIT 8').fetchall()
+            # Round-robin bounded batches: even eight permanently failing rows
+            # must not starve later owner revocations. The durable outbox, not
+            # this process-local cursor, remains the source of pending work.
+            rows=c.execute('SELECT rowid AS queue_rowid,id,page,grant_id FROM pending_revocations ORDER BY (rowid<=?),rowid LIMIT 8',(_revocation_cursor,)).fetchall()
+        completed=0
+        failures=set()
         for row in rows:
+            _revocation_cursor=row['queue_rowid']
             try:
                 if row['page']:
-                    if page_store is None:continue
+                    if page_store is None:
+                        failures.add('local_page_store_unavailable')
+                        continue
                     from pages import PageNotFoundError
                     try:page_store.remove_access_grant(row['page'],row['grant_id'])
                     except PageNotFoundError:pass
                 _send_revocation(row['id'])
-            except AccessServiceError:break
+                completed+=1
+            except AccessServiceError:
+                failures.add('service_confirmation_unavailable')
+            except (OSError, sqlite3.Error, ValueError):
+                # Preserve failed work; never send a hosted revocation before
+                # local denial succeeds, but keep other pages progressing.
+                failures.add('local_state_unavailable')
+        if rows:
+            with revocation_db() as c:
+                remaining=c.execute('SELECT count(*) FROM pending_revocations').fetchone()[0]
+            _report_revocation_retry(completed,remaining,failures)
     finally:_revocation_lock.release()
 
 def retry_preparations(page_store):
@@ -313,8 +354,11 @@ def start_revocation_worker(page_store=None):
         while True:
             try:
                 retry_revocations(page_store)
+            except (OSError, sqlite3.Error, ValueError):
+                _report_revocation_retry(0,None,{'local_state_unavailable'})
+            try:
                 retry_preparations(page_store)
-            except (OSError, sqlite3.Error):pass
+            except (OSError, sqlite3.Error, ValueError):pass
             time.sleep(2)
     worker=threading.Thread(target=run,name='nhp-revocation',daemon=True)
     worker.start()
