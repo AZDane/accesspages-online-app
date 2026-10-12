@@ -37,6 +37,9 @@ profile accesspages_online_test flags=(attach_disconnected,mediate_deleted) {
   # These role stores include SQLite sidecars, atomic writes, native identity
   # and log files, certificates, Nginx temporary files and public projections.
   /data/{admin,broker,connector,tls,public}/{,**} rwk,
+  # Explicit legacy repair checkpoints remain root-owned and inaccessible to
+  # unprivileged app roles; the runtime never changes this directory's owner.
+  /data/legacy-guest-repair/{,**} rwk,
   /data/workers/ rw,
   /data/workers/[2-5][0-9][0-9][0-9][0-9]/{,**} rwk,
   /data/{guest-broker,guest-events,handoff}/ rw,

@@ -1,4 +1,4 @@
-"""Two bounded setup operations over a Unix socket, authenticated by kernel UID."""
+"""Bounded setup operations over a Unix socket, authenticated by kernel UID."""
 import json
 import logging
 import os
@@ -107,6 +107,13 @@ class ControlHandler(socketserver.BaseRequestHandler):
             value = receive(self.request, 3)
             if value == {'op': 'status'}:
                 result = self.server.runtime.public_status()
+            elif value == {'op': 'repair_legacy_guests', 'confirm': True} and type(value['confirm']) is bool:
+                if not self.server.enrolling.acquire(blocking=False):
+                    raise ControlError('busy')
+                try:
+                    result = self.server.runtime.repair_legacy_guests()
+                finally:
+                    self.server.enrolling.release()
             elif (isinstance(value, dict) and set(value) == {'op', 'token'} and
                   value['op'] == 'enroll' and isinstance(value['token'], str) and
                   re.fullmatch(r'[A-Za-z0-9_-]{43}', value['token'])):
@@ -163,7 +170,7 @@ def request(path, operation, **fields):
             if peer_uid(connection) != 0:
                 raise ControlError()
             send(connection, {'op': operation, **fields})
-            reply = receive(connection, 130 if operation == 'enroll' else 5)
+            reply = receive(connection, 130 if operation in ('enroll', 'repair_legacy_guests') else 5)
         if not isinstance(reply, dict) or type(reply.get('ok')) is not bool:
             raise ControlError()
         if not reply['ok']:
@@ -171,11 +178,14 @@ def request(path, operation, **fields):
         result = reply.get('result')
         if not isinstance(result, dict):
             raise ControlError()
-        if operation == 'status' and (set(result) != {'message', 'enrolled', 'ready', 'admin_ready'} or
+        if operation == 'status' and (set(result) not in ({'message', 'enrolled', 'ready', 'admin_ready'}, {'message', 'enrolled', 'ready', 'admin_ready', 'repair'}) or
                 not isinstance(result['message'], str) or
-                any(type(result[key]) is not bool for key in ('enrolled', 'ready', 'admin_ready'))):
+                any(type(result[key]) is not bool for key in ('enrolled', 'ready', 'admin_ready')) or
+                ('repair' in result and result['repair'] not in ('required', 'blocked'))):
             raise ControlError()
         if operation == 'enroll' and result.get('enrolled') is not True:
+            raise ControlError()
+        if operation == 'repair_legacy_guests' and result.get('repaired') is not True:
             raise ControlError()
         return result
     except (OSError, ValueError, RecursionError) as error:

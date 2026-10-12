@@ -195,3 +195,9 @@ The current scope remains sensors, binary sensors and lights (on/off and validat
 Guest revocation reports **Access revoked** once the app has durably removed local access. Existing guest sessions, reads/actions and new handoffs are denied by the local grant checks. Remote cleanup continues through the existing durable worker, including after restart, without delaying that success message. A local storage failure is reported as an error. Connection reset retains its separate lifecycle behavior.
 
 Remote transport withdrawal can lag local denial during an outage. The fixed 15-second transport grace starts when remote revocation is processed; the loaded guest page can show explicit denial while transport remains available. Normal polling remains about 3 seconds with a 10-second request deadline.
+
+## Stuck connecting after updating from beta.26
+
+Update to beta.34, then open the app through Home Assistant. If **Repair older guest access** appears, read the explanation, confirm removal of old guest access and choose **Back up and repair**. The app saves a private local backup before retiring the obsolete invitations and sessions on that installation. Your pages, settings, enrollment and private keys stay in place. Invite guests again after it finishes connecting. Do not uninstall, reset or request another enrollment code.
+
+If the repair is interrupted, reopen the app and confirm the repair again. Unsupported or mixed data stays blocked for support. The local repair backup contains retired guest credentials and is not a normal restore source; do not copy it over a running app.
