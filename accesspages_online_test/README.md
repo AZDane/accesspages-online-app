@@ -28,3 +28,7 @@ Upgrading from before beta.20 requires a coordinated operator cutover of OpenNHP
 This is a beta for dedicated test installations. A successful container test does not establish that every HAOS/Supervisor/device combination works. Preserve app data; resetting or restoring older identities requires operator reconciliation.
 
 See [the app guide](DOCS.md) and [changelog](CHANGELOG.md).
+
+## Updating to beta.33
+
+The service addresses now use `accesspages.app`. Update every installation after the hosted migration, preserving app data. The old default Server address is migrated automatically; existing identities, private keys and page settings are retained when the service trust anchors match. The app obtains a certificate for its new installation address. Do not reset or reinstall. New guest links use `https://access.accesspages.app/`; replace older invitations if needed.

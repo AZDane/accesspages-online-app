@@ -1,7 +1,7 @@
 {
   "version": 3,
-  "landing_origin": "https://access.beta.accesspages.app",
-  "server_host": "nhp.beta.accesspages.app",
+  "landing_origin": "https://access.accesspages.app",
+  "server_host": "nhp.accesspages.app",
   "server_port": 62206,
   "server_public_key": "6ItuHV/FhhUOkaF5MBS6Mfcn20CRXoo62k/yf333vjk=",
   "handoff_public_key": "wmjiXPKxwdqqbnEN3FyvhroIPWwQYgV1ucDpn6YZXzc=",
