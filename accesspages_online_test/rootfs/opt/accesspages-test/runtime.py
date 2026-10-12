@@ -19,6 +19,7 @@ import time
 
 from ingress_control import ControlServer, INGRESS_UID
 from installation import Installation, atomic
+import legacy_guest_repair
 from app_options import read_options, discovery_environment, resource_isolation
 
 ROOT=Path(os.getenv('ACCESSPAGES_DATA_DIR','/data'))
@@ -93,6 +94,18 @@ class Runtime:
         self.last_connector_status=0;self.last_certificate=0;self.last_authority=0
         self.phase='installation status';self.last_error=None
         self.frpc_digest=hashlib.sha256(Path('/opt/frpc').read_bytes()).hexdigest()
+        self.legacy_repair = legacy_guest_repair.status(ROOT)
+
+    def repair_legacy_guests(self):
+        with self.lock:
+            if self.legacy_repair != 'required' or any(role != 'ingress' for role in self.children):
+                raise ValueError('Legacy repair is unavailable')
+            result = legacy_guest_repair.repair(ROOT)
+            self.legacy_repair = legacy_guest_repair.status(ROOT)
+            if self.legacy_repair != 'none':
+                raise ValueError('Legacy repair did not complete')
+            self.message = 'Guest access repaired. Connecting to Access Pages…'
+            return result
 
     def secret(self,name):
         path=ROOT/name
@@ -179,6 +192,11 @@ class Runtime:
         request.unlink(missing_ok=True)
 
     def public_status(self):
+        repair = getattr(self, 'legacy_repair', 'none')
+        if repair != 'none':
+            return {'message': 'Older guest access needs repair.' if repair == 'required' else 'Saved guest data needs support before this app can start.',
+                    'enrolled': (self.installation.root/'binding.json').exists(),
+                    'ready': False, 'admin_ready': False, 'repair': repair}
         roles=[*(r for r in USERS if r!='connector' or getattr(self,'resources',[])),*('page:'+str(record['uid']) for record in self.page_workers.state['pages'].values())]
         ready=not getattr(self,'routes_pending',False) and all(self.children.get(r) and self.children[r].poll() is None and time.monotonic()-self.started.get(r,0)>2 for r in roles)
         if ready:
@@ -393,9 +411,13 @@ class Runtime:
         while not self.stopping:
             self.start_ingress()
             with self.lock:
-                if (ROOT/'admin/reset-connection.request').exists():
+                if self.legacy_repair != 'none':
+                    # Ingress remains available for explicit confirmation. No
+                    # guest, broker, Admin or connector writer starts meanwhile.
+                    pass
+                elif (ROOT/'admin/reset-connection.request').exists():
                     self.reset_service_connection()
-                if (self.installation.root/'binding.json').exists():
+                elif (self.installation.root/'binding.json').exists():
                     try:self.prepare()
                     except Exception as error:
                         self.stop('connector')

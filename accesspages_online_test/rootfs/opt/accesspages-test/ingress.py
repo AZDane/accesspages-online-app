@@ -69,7 +69,20 @@ class Ingress(BaseHTTPRequestHandler):
                     raise ValueError()
                 self.send(200, self.server.control('enroll', token=value['enrollment_token'].strip()))
                 return
+            if path == '/setup/repair' and self.command == 'POST':
+                value = json.loads(body)
+                if value != {'confirm': True} or type(value.get('confirm')) is not bool:
+                    raise ValueError()
+                self.send(200, self.server.control('repair_legacy_guests', confirm=True))
+                return
             state = self.server.control('status')
+            if state.get('repair'):
+                if self.command not in ('GET', 'HEAD') or path.startswith('/api/'):
+                    self.send(503, {'error': 'Guest data needs repair'})
+                else:
+                    markup = (APP/'repair.html').read_text().replace('SETUP_CSRF', self.server.csrf)
+                    self.send(200, markup.encode(), 'text/html; charset=utf-8')
+                return
             if not state.get('admin_ready'):
                 if self.command not in ('GET', 'HEAD') or path.startswith('/api/'):
                     self.send(503, {'error': 'Application is starting'})

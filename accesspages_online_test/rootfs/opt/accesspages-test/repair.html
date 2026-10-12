@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Repair Access Pages</title>
+<style>body{font:17px system-ui;background:#071225;color:#e9f1ff;max-width:650px;margin:10vh auto;padding:24px}p,label{line-height:1.6}button{font:inherit;font-weight:600;padding:14px 20px;border:0;border-radius:8px;background:#22b8dc;color:#071225;margin-top:20px;cursor:pointer}button:disabled{opacity:.5;cursor:default}label{display:block;margin-top:24px}input{margin-right:10px}#status{min-height:2em}a{color:#22b8dc}</style>
+<h1>Repair older guest access</h1>
+<p>This installation still has guest access saved by an older version. That prevents the updated app from starting.</p>
+<p><strong>Your pages, settings and installation keys will stay in place.</strong> The repair removes the old guest invitations and sessions on this installation. You will need to invite those guests again.</p>
+<p>A private backup of the affected data will be saved inside this app before anything is changed. Do not uninstall or reset the app.</p>
+<form hidden>
+  <label><input id="confirm" type="checkbox">I understand that old guest access on this installation will be removed.</label>
+  <button id="repair" disabled>Back up and repair</button>
+</form>
+<p id="status" role="status">Checking saved data…</p>
+<script>
+const form=document.querySelector('form'),button=document.querySelector('#repair'),confirmation=document.querySelector('#confirm'),status=document.querySelector('#status');
+let busy=false;
+confirmation.addEventListener('change',()=>{button.disabled=busy||!confirmation.checked;});
+async function check(){
+  if(busy)return;
+  try{
+    const response=await fetch('setup/status',{cache:'no-store'});
+    if(!response.ok)throw Error();
+    const state=await response.json();
+    if(!state.repair){location.reload();return;}
+    form.hidden=state.repair!=='required';
+    status.textContent=state.repair==='required'?'Ready to repair.':'The saved data does not match the supported repair. Contact support; no repair has been applied.';
+  }catch{status.textContent='Unable to check saved data. Please reload this page.';}
+}
+form.addEventListener('submit',async event=>{
+  event.preventDefault();if(busy||!confirmation.checked)return;
+  busy=true;button.disabled=true;confirmation.disabled=true;status.textContent='Saving a backup and repairing guest access…';
+  try{
+    const response=await fetch('setup/repair',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Pages-CSRF':'SETUP_CSRF'},body:JSON.stringify({confirm:true})});
+    if(!response.ok)throw Error();
+    const result=await response.json();if(result.repaired!==true)throw Error();
+    location.reload();
+  }catch{status.textContent='The repair could not finish. Keep the app installed and contact support. Your repair backup, if created, is kept inside the app.';busy=false;confirmation.disabled=false;button.disabled=!confirmation.checked;}
+});
+check();
+</script>
+</html>

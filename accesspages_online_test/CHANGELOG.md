@@ -1,3 +1,10 @@
+## 0.1.0-beta.34
+
+- Replace the endless Connecting screen after a beta.26 upgrade with an explicit **Repair older guest access** flow.
+- After you confirm, save a private backup and retire the incompatible guest invitations and sessions on this installation. Preserve pages, settings, enrollment, private keys and native lock files. Invite guests again after the repair.
+- Keep all guest services stopped until the repair completes. Interrupted repairs can resume; unknown or mixed invitation formats require support.
+- No reset, uninstall or new enrollment API code is required for this repair. Existing compatible installations do not need a repair.
+
 ## 0.1.0-beta.33
 
 - Move service and installation addresses from `beta.accesspages.app` to `accesspages.app`.
