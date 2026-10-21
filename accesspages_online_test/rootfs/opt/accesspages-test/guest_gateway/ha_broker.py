@@ -320,12 +320,17 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         return
 
+    def end_headers(self):
+        # Also cover parser/unsupported-method errors, which bypass _send on
+        # these private listeners. The public TLS frontend adds no-store too.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def _send(self, status, payload, headers=None):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -337,7 +342,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)

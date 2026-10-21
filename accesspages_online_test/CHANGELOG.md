@@ -1,3 +1,8 @@
+## 0.1.0-beta.36
+
+- Apply `Cache-Control: no-store` to every local broker response, including unsupported-method and parser errors. The public TLS frontend already applies this header; this extends the same protection to the private listeners.
+- Updating from beta.35 preserves enrollment, pages, invitations and guest sessions. Update the existing app normally; no reset or new enrollment is required.
+
 ## 0.1.0-beta.35
 
 - Rename the app to Access Pages Online and use the existing Access Pages icon in the app list. Keep the standard shield/key sidebar icon.
