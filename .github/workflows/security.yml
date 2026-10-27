@@ -1,0 +1,64 @@
+name: App security
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '47 9 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: app-security-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    name: App image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            ha_arch: amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            ha_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build the actual native HA package
+        env:
+          HA_ARCH: ${{ matrix.ha_arch }}
+        run: |
+          mkdir -p artifacts/security
+          BASE=$(awk -v arch="$HA_ARCH:" '$1 == arch {print $2}' accesspages_online_test/build.yaml)
+          test -n "$BASE"
+          docker build --progress=plain --build-arg "BUILD_FROM=$BASE" --build-arg "BUILD_ARCH=$HA_ARCH" \
+            -t accesspages-security:check accesspages_online_test
+          docker image inspect --format '{"id":{{json .Id}},"architecture":{{json .Architecture}},"created":{{json .Created}}}' \
+            accesspages-security:check > artifacts/security/image.json
+      - name: Check packaged startup, credentials and enrollment offline
+        run: python3 tests/check_startup.py accesspages-security:check --case default-container > artifacts/security/startup.jsonl
+      - name: Install checksum-verified scanner
+        run: scripts/security-install-trivy "$RUNNER_TEMP/security-tools"
+      - name: Emit unfiltered vulnerability results and SBOM
+        run: |
+          "$RUNNER_TEMP/security-tools/trivy" image --scanners vuln --ignorefile '' --list-all-pkgs \
+            --format json --output artifacts/security/app-trivy.json accesspages-security:check
+          "$RUNNER_TEMP/security-tools/trivy" image --scanners vuln --ignorefile '' \
+            --format cyclonedx --output artifacts/security/app-sbom.cdx.json accesspages-security:check
+      - name: Gate all HIGH and CRITICAL findings, including unfixed
+        run: python3 scripts/security-report --output artifacts/security/findings.json artifacts/security/app-trivy.json
+      - name: Retain complete evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-security-${{ matrix.arch }}-${{ github.sha }}
+          path: artifacts/security/
+          if-no-files-found: error
+          retention-days: 90

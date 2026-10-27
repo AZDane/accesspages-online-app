@@ -1,5 +1,5 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.22
-FROM golang:1.26-bookworm AS protocol-build
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.22@sha256:433cc135477d011b22922bbfce9755d05ec2b7abf06cffb47f455412165e6d57
+FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS protocol-build
 
 ARG OPENNHP_COMMIT=819e1b31e8ad0f028fe1de41789d8bd6c5f1cd6d
 ARG NHP_FRP_COMMIT=2d9ad7d6fa0609fd973606b4b898e71c33854e0f
@@ -9,6 +9,10 @@ RUN git clone https://github.com/OpenNHP/opennhp.git core \
     && git clone https://github.com/OpenNHP/nhp-frp.git frp \
     && git -C frp checkout --detach "${NHP_FRP_COMMIT}"
 
+COPY nhp/security-opennhp.patch nhp/security-frp.patch /build/
+RUN cd /build/core && git apply --check /build/security-opennhp.patch && git apply /build/security-opennhp.patch \
+    && cd /build/frp && git apply --check /build/security-frp.patch && git apply /build/security-frp.patch
+
 COPY nhp/native-payload-logging.patch nhp/patch-payload-logging.sh /build/
 RUN sh /build/patch-payload-logging.sh /build/core
 COPY nhp/agent-retry-pacing.patch /build/
@@ -16,15 +20,15 @@ RUN cd /build/core && git apply --check /build/agent-retry-pacing.patch \
     && git apply /build/agent-retry-pacing.patch
 COPY nhp/main.go /build/core/endpoints/accesspages_online_test/main.go
 RUN cd /build/core/endpoints \
-    && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags='-s -w' \
        -o /out/machinectl ./accesspages_online_test
 
 RUN cd /build/frp \
     && go mod edit \
        -replace github.com/OpenNHP/opennhp/nhp=/build/core/nhp \
        -replace github.com/OpenNHP/opennhp/endpoints=/build/core/endpoints \
-    && go mod tidy \
-    && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+    && go mod download \
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags='-s -w' \
        -o /out/frpc ./cmd/frpc
 
 FROM ${BUILD_FROM}
@@ -33,7 +37,11 @@ ARG BUILD_ARCH=amd64
 ARG BUILD_VERSION=0.1.0-beta.36
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
-RUN apk add --no-cache ca-certificates nginx openssl py3-cryptography python3 tini \
+COPY apk.lock /tmp/apk.lock
+# Freeze all OS dependencies; fail if a reviewed version is no longer available.
+# The custom tini/Python entrypoint does not use the base image tempio utility.
+RUN xargs apk add --no-cache --upgrade < /tmp/apk.lock \
+    && rm /tmp/apk.lock /usr/bin/tempio \
     && addgroup -g 2000 access-pages \
     && addgroup -g 2001 access-workers \
     && addgroup -g 2002 access-frontend \

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Install only into the caller's task/runner directory; never update a system tool.
+set -eu
+out=${1:?Usage: security-install-trivy OUTPUT_DIRECTORY}
+case "$(uname -m)" in
+  x86_64) arch=64bit; digest=c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0 ;;
+  aarch64|arm64) arch=ARM64; digest=e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f ;;
+  *) echo 'Unsupported scanner architecture' >&2; exit 1 ;;
+esac
+mkdir -p "$out"
+curl --fail --silent --show-error --location "https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-${arch}.tar.gz" -o "$out/trivy.tar.gz"
+printf '%s  %s\n' "$digest" "$out/trivy.tar.gz" | sha256sum --check -
+tar -xzf "$out/trivy.tar.gz" -C "$out" trivy
+"$out/trivy" --version
