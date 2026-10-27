@@ -44,6 +44,13 @@ jobs:
             accesspages-security:check > artifacts/security/image.json
       - name: Check packaged startup, credentials and enrollment offline
         run: python3 tests/check_startup.py accesspages-security:check --case default-container > artifacts/security/startup.jsonl
+      - name: Run application and real TLS integration regressions
+        run: |
+          docker run --rm --network none --entrypoint python3 \
+            -e PYTHONPATH=/opt/accesspages-test:/opt/accesspages-test/guest_gateway \
+            -e GATEWAY_TLS_INTEGRATION=1 -v "$PWD/tests:/tests:ro" \
+            accesspages-security:check -B -m unittest discover -s /tests -v \
+            > artifacts/security/application-tests.log 2>&1
       - name: Install checksum-verified scanner
         run: scripts/security-install-trivy "$RUNNER_TEMP/security-tools"
       - name: Emit unfiltered vulnerability results and SBOM

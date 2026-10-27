@@ -15,7 +15,6 @@ class ControlTests(unittest.TestCase):
         runtime = Mock()
         runtime.public_status.return_value = {'enrolled': False}
         runtime.enroll.return_value = {'enrolled': True}
-        runtime.repair_legacy_guests.return_value = {'repaired': True}
         server = SimpleNamespace(runtime=runtime, enrolling=threading.Lock())
         if locked:
             server.enrolling.acquire()
@@ -30,7 +29,7 @@ class ControlTests(unittest.TestCase):
             return control.receive(client, 1), runtime
 
     def test_only_exact_status_and_enroll_operations_dispatch(self):
-        for value in ({'op': 'status'}, {'op': 'enroll', 'token': 'A'*43}, {'op': 'repair_legacy_guests', 'confirm': True}):
+        for value in ({'op': 'status'}, {'op': 'enroll', 'token': 'A'*43}):
             reply, runtime = self.exchange(value)
             self.assertTrue(reply['ok'])
             self.assertEqual(len(runtime.mock_calls), 1)
@@ -38,7 +37,7 @@ class ControlTests(unittest.TestCase):
                       {'op': 'status', 'uid': 1006}, {'op': 'status', 'url': 'http://example.invalid'},
                       {'op': 'enroll', 'token': 'A'*43, 'server': 'example.invalid'},
                       {'op': 'enroll', 'token': 'a'*42}, {'op': 'enroll', 'token': '../'*14+'a'},
-                      {'op': 'repair_legacy_guests'}, {'op': 'repair_legacy_guests', 'confirm': False},
+                      {'op': 'repair_legacy_guests', 'confirm': True}, {'op': 'repair_legacy_guests'}, {'op': 'repair_legacy_guests', 'confirm': False},
                       {'op': 'repair_legacy_guests', 'confirm': 1}, {'op': 'repair_legacy_guests', 'confirm': True, 'path': '/data'},
                       {'op': 'enroll', 'token': []}, ['status'], None):
             reply, runtime = self.exchange(value)
@@ -60,7 +59,7 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(runtime.mock_calls, [])
         self.assertTrue(self.exchange({'op': 'status'}, locked=True)[0]['ok'])
         reply, runtime = self.exchange({'op': 'repair_legacy_guests', 'confirm': True}, locked=True)
-        self.assertEqual(reply, {'ok': False, 'error': 'busy'})
+        self.assertEqual(reply, {'ok': False, 'error': 'invalid'})
         self.assertEqual(runtime.mock_calls, [])
 
     def test_total_receive_deadline_and_thread_limit(self):

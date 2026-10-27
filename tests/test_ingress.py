@@ -87,18 +87,12 @@ class IngressTests(unittest.TestCase):
                 'X-Ingress-Path': '/', 'X-Access-Pages-CSRF': self.server.csrf})[0], 403)
         self.server.control.assert_not_called()
 
-    def test_repair_screen_requires_exact_confirmed_post_and_does_not_expose_data(self):
-        self.state.update(enrolled=True, repair='required')
-        status, body, _ = self.call()
-        self.assertEqual(status, 200)
-        self.assertIn(b'Repair older guest access', body)
-        self.assertIn(self.server.csrf.encode(), body)
-        self.assertNotIn(self.server.admin_token.encode(), body)
-        self.assertEqual(self.call('/api/admin/pages')[0], 503)
-        for payload in ('{}', '{"confirm":false}', '{"confirm":1}', '{"confirm":true,"path":"/data"}'):
-            self.assertEqual(self.call('/setup/repair', 'POST', payload, {'X-Access-Pages-CSRF': self.server.csrf})[0], 400)
-        self.assertEqual(self.call('/setup/repair', 'POST', '{"confirm":true}', {'X-Access-Pages-CSRF': self.server.csrf})[0], 200)
-        self.server.control.assert_called_with('repair_legacy_guests', confirm=True)
+    def test_retired_repair_route_cannot_dispatch_a_privileged_operation(self):
+        self.server.control.reset_mock()
+        status, _, _ = self.call('/setup/repair', 'POST', '{"confirm":true}',
+                               {'X-Access-Pages-CSRF': self.server.csrf})
+        self.assertEqual(status, 503)
+        self.server.control.assert_called_once_with('status')
 
     def test_bad_framing_and_targets_do_not_reach_control_or_admin(self):
         for target in (b'http://attacker.invalid/', b'//attacker.invalid/', b'/#fragment'):
