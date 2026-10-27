@@ -51,15 +51,22 @@ jobs:
             -e GATEWAY_TLS_INTEGRATION=1 -v "$PWD/tests:/tests:ro" \
             accesspages-security:check -B -m unittest discover -s /tests -v \
             > artifacts/security/application-tests.log 2>&1
+      - name: Verify the shipped AppArmor profile on the disposable runner
+        run: |
+          sudo apparmor_parser -r accesspages_online_test/apparmor.txt
+          python3 tests/check_startup.py accesspages-security:check --case app-apparmor > artifacts/security/apparmor.jsonl
       - name: Install checksum-verified scanner
+        if: always()
         run: scripts/security-install-trivy "$RUNNER_TEMP/security-tools"
       - name: Emit unfiltered vulnerability results and SBOM
+        if: always()
         run: |
           "$RUNNER_TEMP/security-tools/trivy" image --scanners vuln --ignorefile '' --list-all-pkgs \
             --format json --output artifacts/security/app-trivy.json accesspages-security:check
           "$RUNNER_TEMP/security-tools/trivy" image --scanners vuln --ignorefile '' \
             --format cyclonedx --output artifacts/security/app-sbom.cdx.json accesspages-security:check
       - name: Gate all HIGH and CRITICAL findings, including unfixed
+        if: always()
         run: python3 scripts/security-report --output artifacts/security/findings.json artifacts/security/app-trivy.json
       - name: Retain complete evidence
         if: always()
