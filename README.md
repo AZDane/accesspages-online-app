@@ -21,6 +21,17 @@ This is a beta for dedicated test installations. A successful container test doe
 
 See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages_online_test/CHANGELOG.md).
 
+## Updating to beta.39
+
+Beta.39 gives newly issued AccessLinks a separate durable revocation capability,
+so pending hosted cleanup remains authorized after a connection reset or API-key
+rotation. The matching hosted service must be updated before installing this app
+version. Back up the existing app, refresh the app store, and update normally.
+Keep its app data: updating from beta.38 preserves enrollment, keys, pages,
+invitations and guest sessions. Do not reset or reinstall the app. After the
+update, check startup, an existing guest page, and Finished Sharing or guest
+revocation on the test installation.
+
 ## Updating to beta.38
 
 Beta.38 prevents pending service-revocation retries from interrupting an
