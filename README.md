@@ -21,6 +21,15 @@ This is a beta for dedicated test installations. A successful container test doe
 
 See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages_online_test/CHANGELOG.md).
 
+## Updating to beta.38
+
+Beta.38 prevents pending service-revocation retries from interrupting an
+otherwise healthy guest connector. Back up the existing app, refresh the app
+store, and update Access Pages Online. Keep its app data: updating from beta.37
+preserves enrollment, keys, pages, invitations and guest sessions. No reset,
+reinstall or hosted-service rollout is required. After the update, check startup
+and an existing guest page on your test installation.
+
 ## Updating to beta.37
 
 Beta.37 fixes Supervisor build failures caused by Alpine package conflicts.
