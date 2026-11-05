@@ -1,4 +1,10 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.22@sha256:433cc135477d011b22922bbfce9755d05ec2b7abf06cffb47f455412165e6d57
+ARG BUILD_ARCH=amd64
+
+# Supervisor's legacy build.yaml validator cannot accept digest references.
+# Keep the reviewed bases here and select using its BUILD_ARCH argument.
+FROM ghcr.io/home-assistant/amd64-base:3.22@sha256:433cc135477d011b22922bbfce9755d05ec2b7abf06cffb47f455412165e6d57 AS base-amd64
+FROM ghcr.io/home-assistant/aarch64-base:3.22@sha256:f6d6d801e5695056806ac6059119692525b348e9bb1b91acd4bc2b00a56a5213 AS base-aarch64
+
 FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS protocol-build
 
 ARG OPENNHP_COMMIT=819e1b31e8ad0f028fe1de41789d8bd6c5f1cd6d
@@ -31,10 +37,10 @@ RUN cd /build/frp \
     && CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags='-s -w' \
        -o /out/frpc ./cmd/frpc
 
-FROM ${BUILD_FROM}
+FROM base-${BUILD_ARCH}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.36
+ARG BUILD_VERSION=0.1.0-beta.37
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
 COPY apk.lock /tmp/apk.lock
@@ -53,7 +59,8 @@ COPY --from=protocol-build /out/machinectl /opt/machinectl
 COPY --from=protocol-build /out/frpc /opt/frpc
 COPY rootfs /
 RUN printf '%s\n' "${BUILD_VERSION}" > /opt/accesspages-test/version
-RUN chmod 0755 /opt/machinectl /opt/frpc \
+# COPY preserves checkout directory modes, including a private local umask.
+RUN chmod 0755 /opt /opt/machinectl /opt/frpc \
     && find /opt/accesspages-test -type d -exec chmod 0755 {} \; \
     && find /opt/accesspages-test -type f -exec chmod 0644 {} \; \
     && chmod 0755 /opt/accesspages-test/guest_gateway/server.py

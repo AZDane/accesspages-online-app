@@ -21,6 +21,14 @@ This is a beta for dedicated test installations. A successful container test doe
 
 See [the app guide](accesspages_online_test/DOCS.md) and [changelog](accesspages_online_test/CHANGELOG.md).
 
+## Updating to beta.37
+
+Beta.37 fixes Supervisor build failures caused by Alpine package conflicts.
+Back up the existing app, refresh the app store, and update Access Pages Online.
+Keep its app data: updating from beta.36 preserves enrollment, keys, pages and
+guest state. No reset, reinstall or hosted-service rollout is required. After
+the update, check startup and existing guest access on your test installation.
+
 ## Updating to beta.33
 
 The service addresses now use `accesspages.app`. Update every installation after the hosted migration, preserving app data. The old default Server address is migrated automatically; existing identities, private keys and page settings are retained when the service trust anchors match. The app obtains a certificate for its new installation address. Do not reset or reinstall. New guest links use `https://access.accesspages.app/`; replace older invitations if needed.
