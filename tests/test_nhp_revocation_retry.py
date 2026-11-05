@@ -196,7 +196,7 @@ class RevocationRetryTests(unittest.TestCase):
             self.assertEqual(call.kwargs,{'remaining':1,'reasons':['service_confirmation_unavailable']})
         self.assertNotIn('private-',str(log.call_args_list))
         with patch.object(nhp,'audit') as log, patch.object(nhp,'machine',return_value={'state':'revoked','network_admission_update':'applied'}):
-            nhp.retry_revocations()
+            nhp.retry_revocations(now=170)
         log.assert_called_once_with('service_revocations_completed',completed=1,remaining=0)
         self.assertIsNone(nhp._revocation_warning_at)
 
