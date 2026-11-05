@@ -1,3 +1,9 @@
+## 0.1.0-beta.39
+
+- Give each newly issued AccessLink a separate, durable revocation capability. The hosted service stores only its hash, while the Home Assistant app retains the raw capability for authenticated cleanup.
+- Preserve that capability in the local retry outbox so a connection reset or API-key rotation cannot leave an old hosted admission active. Already absent or terminal links reconcile successfully; an ownership mismatch remains an explicit error.
+- Updating from beta.38 preserves enrollment, keys, pages, invitations and guest sessions. The matching hosted service must be updated first. Back up, refresh the app store and update normally; do not reset or reinstall the app.
+
 ## 0.1.0-beta.38
 
 - Keep an established guest connector running through brief local lock contention, native timeouts and protected-service status outages. Block new invitations while connector status is stale and fail closed after 120 seconds or on confirmed unsafe configuration, identity or process changes.
