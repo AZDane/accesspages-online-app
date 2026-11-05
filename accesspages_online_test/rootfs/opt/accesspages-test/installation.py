@@ -13,6 +13,20 @@ from cryptography.hazmat.primitives.asymmetric import ec, x25519
 OLD_SERVER = 'nhp.beta.accesspages.app:62206'
 NEW_SERVER = 'nhp.accesspages.app:62206'
 TRUST_FIELDS = ('server_public_key', 'handoff_public_key', 'control_certificate', 'frp_certificate')
+NATIVE_ERROR_CATEGORIES = frozenset({
+    'invalid_request', 'local_lock_unavailable', 'local_lock_contention',
+    'local_configuration', 'native_start_unavailable', 'native_no_ack',
+    'native_timeout', 'protected_api_unavailable', 'authenticated_denial',
+    'invalid_response', 'native_failure',
+})
+
+
+class NativeOperationError(RuntimeError):
+    """Privacy-safe failure from the native OpenNHP operation boundary."""
+    def __init__(self, category):
+        self.category = category if category in NATIVE_ERROR_CATEGORIES else 'native_failure'
+        self.connector_configuration_changed = False
+        super().__init__('OpenNHP operation failed: ' + self.category)
 
 
 def atomic(path, value, mode=0o600):
@@ -91,14 +105,27 @@ class Installation:
         atomic(self.root/'profile.json', json.dumps(current), 0o644)
 
     def operation(self, body, *, connector=False):
-        result = subprocess.run(['/opt/machinectl'], input=json.dumps(body),
-                                text=True, capture_output=True, timeout=35,
-                                env={**os.environ, 'MACHINE_DIR':str(self.root/'connector-nhp' if connector else self.machine_dir)})
+        try:
+            result = subprocess.run(['/opt/machinectl'], input=json.dumps(body),
+                                    text=True, capture_output=True, timeout=35,
+                                    env={**os.environ, 'MACHINE_DIR':str(self.root/'connector-nhp' if connector else self.machine_dir)})
+        except subprocess.TimeoutExpired as error:
+            raise NativeOperationError('native_timeout') from error
+        except (OSError, subprocess.SubprocessError) as error:
+            raise NativeOperationError('native_start_unavailable') from error
         if result.returncode:
-            raise RuntimeError('OpenNHP operation denied or unavailable')
-        value = json.loads(result.stdout)
+            try:
+                failure = json.loads(result.stdout)
+                category = failure.get('category') if isinstance(failure, dict) else None
+            except (TypeError, ValueError):
+                category = None
+            raise NativeOperationError(category)
+        try:
+            value = json.loads(result.stdout)
+        except (TypeError, ValueError) as error:
+            raise NativeOperationError('invalid_response') from error
         if not isinstance(value, dict):
-            raise RuntimeError('Invalid OpenNHP response')
+            raise NativeOperationError('invalid_response')
         return value
 
     def profile(self):
@@ -156,7 +183,14 @@ class Installation:
             # this Gateway. Old connector credentials never survive its epoch.
             self.refresh_authority()
             binding['route']=route;atomic(binding_path,json.dumps(binding))
-            return self.ensure_connector()
+            try:
+                return self.ensure_connector()
+            except NativeOperationError as error:
+                # The authenticated epoch change is already confirmed. Even a
+                # transient failure while fetching replacement credentials must
+                # not preserve the connector from the previous epoch.
+                error.connector_configuration_changed=True
+                raise
         key=x25519.X25519PrivateKey.from_private_bytes(base64.b64decode((self.root/'connector-nhp/private-key').read_text()))
         public=base64.b64encode(key.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)).decode()
         connector=self.operation({'op':'connector_status','connector_public_key':public})

@@ -18,6 +18,12 @@ ORIGIN = os.getenv('NHP_GATEWAY_ORIGIN', 'https://gateway-a.localhost:8088')
 LANDING_ORIGIN = os.getenv('NHP_LANDING_ORIGIN', 'https://localhost:8090')
 INSTALLATION_ROUTING = os.getenv('NHP_INSTALLATION_ROUTING') == '1'
 ACCESS_LINK_MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60
+NATIVE_ERROR_CATEGORIES = frozenset({
+    'invalid_request', 'local_lock_unavailable', 'local_lock_contention',
+    'local_configuration', 'native_start_unavailable', 'native_no_ack',
+    'native_timeout', 'protected_api_unavailable', 'authenticated_denial',
+    'invalid_response', 'native_failure',
+})
 try:
     PAGE_RESOURCES = json.loads(os.getenv('NHP_PAGE_RESOURCE_MAP', '{}'))
 except json.JSONDecodeError:
@@ -49,13 +55,29 @@ def resource_for_grant(page, instance_id=None, token_hash=''):
     value = PAGE_RESOURCES.get(page, RESOURCE)
     return value if isinstance(value, str) and value else RESOURCE
 
+def ready_routes(manifest, resource=None):
+    """Require the runtime's short-lived, authenticated-status readiness."""
+    value = json.loads(Path(os.environ['NHP_READY_ROUTES_FILE']).read_text())
+    if (value['gateway_id'] != manifest['gateway_id'] or value['epoch'] != manifest['epoch']
+            or value['isolation'] != manifest['isolation']
+            or not isinstance(value.get('checked_at'), (int, float))
+            or not 0 <= time.time() - value['checked_at'] < 10
+            or not isinstance(value.get('resources'), list)):
+        raise AccessServiceError('Page routes are not ready')
+    if resource is not None and resource not in value['resources']:
+        raise AccessServiceError('Page route is not ready')
+    return value
+
 def invitation_ready(page):
     """Current route prerequisite for issuing a link, not installation health."""
     if not ENABLED or not INSTALLATION_ROUTING:
         return True
     try:
-        if route_manifest()['isolation'] == 'page':
-            resource_for_grant(page['id'], page['instance_id'])
+        manifest = route_manifest()
+        resource = None
+        if manifest['isolation'] == 'page':
+            resource = resource_for_grant(page['id'], page['instance_id'])
+        ready_routes(manifest, resource)
         # Guest isolation establishes its route during invitation creation.
         return True
     except (AccessServiceError, OSError, ValueError, KeyError, TypeError):
@@ -87,29 +109,44 @@ def wait_for_guest_route(page, instance, token_hash):
             raise AccessServiceError('Resource isolation changed; please retry')
         try:
             resource = resource_for_grant(page, instance, token_hash)
-            ready = json.loads(Path(os.environ['NHP_READY_ROUTES_FILE']).read_text())
-            if (ready['gateway_id'] == manifest['gateway_id'] and ready['epoch'] == manifest['epoch']
-                    and ready['isolation'] == 'guest' and 0 <= time.time() - ready['checked_at'] < 10
-                    and resource in ready['resources']):
-                return resource
+            ready_routes(manifest, resource)
+            return resource
         except (AccessServiceError, OSError, ValueError, KeyError):
             pass
         time.sleep(0.5)
     raise AccessServiceError('Guest route is not ready; capacity or connection may be unavailable. Please retry.')
 
+class NativeAccessServiceError(AccessServiceError):
+    def __init__(self, category):
+        self.category = category if category in NATIVE_ERROR_CATEGORIES else 'native_failure'
+        if self.category == 'authenticated_denial':
+            message = 'OpenNHP Service denied the authenticated operation'
+        elif self.category in ('invalid_request', 'local_configuration', 'invalid_response'):
+            message = 'OpenNHP Service could not confirm the operation'
+        else:
+            message = 'OpenNHP Service is temporarily unavailable; the operation will be retried'
+        super().__init__(message)
+
 def machine(body):
     try:
         result = subprocess.run(['/opt/machinectl'], input=json.dumps(body), text=True, capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired as error:
+        raise NativeAccessServiceError('native_timeout') from error
     except (OSError, subprocess.SubprocessError) as error:
-        raise AccessServiceError('NHP Server is unavailable; the operation can be retried') from error
+        raise NativeAccessServiceError('native_start_unavailable') from error
     if result.returncode:
-        raise AccessServiceError('NHP Server denied the operation or is unavailable')
+        try:
+            failure = json.loads(result.stdout)
+            category = failure.get('category') if isinstance(failure, dict) else None
+        except (TypeError, ValueError):
+            category = None
+        raise NativeAccessServiceError(category)
     try:
         response = json.loads(result.stdout)
         if not isinstance(response, dict):
             raise ValueError('Object required')
     except ValueError as error:
-        raise AccessServiceError('NHP Server response was not confirmed; the operation can be retried') from error
+        raise NativeAccessServiceError('invalid_response') from error
     return response
 
 def db(name):
@@ -161,6 +198,8 @@ class NHPClient:
             raise AccessServiceError('Invalid AccessLink lifetime')
         if not 1<=ttl<=ACCESS_LINK_MAX_LIFETIME_SECONDS:
             raise AccessServiceError('Access Pages invitations support up to 30 days')
+        if INSTALLATION_ROUTING and not invitation_ready({'id': page, 'instance_id': instance}):
+            raise AccessServiceError('Page route is not ready')
         guest_mode = INSTALLATION_ROUTING and route_manifest()['isolation'] == 'guest'
         if guest_mode:
             route_reservations.reserve(os.environ['GATEWAY_DATA_DIR'], page, instance, token_hash)
@@ -231,13 +270,16 @@ class NHPClient:
 _revocation_lock=threading.Lock()
 _revocation_cursor=0
 _revocation_warning_at=None
+_revocation_retry={}
+REVOCATION_RETRY_BASE=5
+REVOCATION_RETRY_LIMIT=60
 
-def _report_revocation_retry(completed, remaining, failures):
+def _report_revocation_retry(completed, remaining, failures, now=None):
     global _revocation_warning_at
     if completed:
         audit('service_revocations_completed', completed=completed, remaining=remaining)
     if failures:
-        now=time.monotonic()
+        now=time.monotonic() if now is None else now
         if _revocation_warning_at is None or now-_revocation_warning_at>=60:
             # Never include invitation IDs, helper output, credentials or page contents.
             audit('service_revocations_pending', remaining=remaining, reasons=sorted(failures))
@@ -273,11 +315,23 @@ def _send_revocation(ident):
     with revocation_db() as c:
         c.execute('DELETE FROM pending_revocations WHERE id=?',(ident,))
         c.execute('DELETE FROM links WHERE id=?',(ident,))
+    _revocation_retry.pop(_revocation_key(ident),None)
 
-def retry_revocations(page_store=None):
+def _revocation_key(ident):
+    # Process-local scheduling must not cross a restored/reset data directory.
+    return (str(Path(os.environ['GATEWAY_DATA_DIR'])/'nhp-links.db'),ident)
+
+def _defer_revocation(ident, now):
+    key=_revocation_key(ident)
+    attempts=_revocation_retry.get(key,(0,0))[0]+1
+    delay=min(REVOCATION_RETRY_LIMIT,REVOCATION_RETRY_BASE*(2**min(attempts-1,8)))
+    _revocation_retry[key]=(attempts,now+delay)
+
+def retry_revocations(page_store=None, now=None):
     global _revocation_cursor
     if not _revocation_lock.acquire(blocking=False):return
     try:
+        now=time.monotonic() if now is None else now
         with revocation_db() as c:
             # Round-robin bounded batches: even eight permanently failing rows
             # must not starve later owner revocations. The durable outbox, not
@@ -287,26 +341,32 @@ def retry_revocations(page_store=None):
         failures=set()
         for row in rows:
             _revocation_cursor=row['queue_rowid']
+            if _revocation_retry.get(_revocation_key(row['id']),(0,0))[1]>now:
+                continue
             try:
                 if row['page']:
                     if page_store is None:
                         failures.add('local_page_store_unavailable')
+                        _defer_revocation(row['id'],now)
                         continue
                     from pages import PageNotFoundError
                     try:page_store.remove_access_grant(row['page'],row['grant_id'])
                     except PageNotFoundError:pass
                 _send_revocation(row['id'])
                 completed+=1
-            except AccessServiceError:
-                failures.add('service_confirmation_unavailable')
+            except AccessServiceError as error:
+                category=getattr(error,'category',None)
+                failures.add(category if category in NATIVE_ERROR_CATEGORIES else 'service_confirmation_unavailable')
+                _defer_revocation(row['id'],now)
             except (OSError, sqlite3.Error, ValueError):
                 # Preserve failed work; never send a hosted revocation before
                 # local denial succeeds, but keep other pages progressing.
                 failures.add('local_state_unavailable')
+                _defer_revocation(row['id'],now)
         if rows:
             with revocation_db() as c:
                 remaining=c.execute('SELECT count(*) FROM pending_revocations').fetchone()[0]
-            _report_revocation_retry(completed,remaining,failures)
+            _report_revocation_retry(completed,remaining,failures,now)
     finally:_revocation_lock.release()
 
 def retry_preparations(page_store):

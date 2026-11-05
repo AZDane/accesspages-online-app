@@ -12,10 +12,12 @@ import time
 
 
 DOCKER = ['docker']
+DOCKER_TIMEOUT = 20
 
 def docker(*args, check=True):
     return subprocess.run(
-        [*DOCKER, *args], check=check, capture_output=True, text=True, timeout=20,
+        [*DOCKER, *args], check=check, capture_output=True, text=True,
+        timeout=DOCKER_TIMEOUT,
     )
 
 
@@ -64,7 +66,7 @@ def check_startup(image, name, *, apparmor=False):
                      'PYTHONPATH=/opt/accesspages-test:/opt/accesspages-test/guest_gateway',
                      ident, 'python3', '-B', '-'],
                     input=Path(__file__).with_name('test_ha_credentials.py').read_text(),
-                    text=True, capture_output=True, timeout=30,
+                    text=True, capture_output=True, timeout=DOCKER_TIMEOUT + 10,
                 )
                 result['credential_tests_passed'] = credentials.returncode == 0
                 result['credential_tests_output'] = credentials.stderr[-12000:]
@@ -73,7 +75,7 @@ def check_startup(image, name, *, apparmor=False):
                      'PYTHONPATH=/opt/accesspages-test:/opt/accesspages-test/guest_gateway',
                      ident, 'python3', '-B', '-'],
                     input=Path(__file__).with_name('test_enrollment.py').read_text(),
-                    text=True, capture_output=True, timeout=30,
+                    text=True, capture_output=True, timeout=DOCKER_TIMEOUT + 10,
                 )
                 result['enrollment_tests_passed'] = enrollment.returncode == 0
                 result['enrollment_tests_output'] = enrollment.stderr[-12000:]
@@ -97,6 +99,7 @@ if __name__ == '__main__':
     if args.docker_wrapper:
         wrapper = args.docker_wrapper.resolve(strict=True)
         DOCKER = [str(wrapper), 'docker']
+        DOCKER_TIMEOUT = 60
     results = []
     if args.case in ('all', 'default-container'):
         results.append(check_startup(args.image, 'default-container'))

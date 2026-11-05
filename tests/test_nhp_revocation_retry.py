@@ -69,6 +69,12 @@ class RevocationRetryTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.env=patch.dict(os.environ,{'GATEWAY_DATA_DIR':self.directory.name})
         self.env.start();self.addCleanup(self.env.stop)
+        cursor=patch.object(nhp,'_revocation_cursor',0,create=True)
+        cursor.start();self.addCleanup(cursor.stop)
+        warning=patch.object(nhp,'_revocation_warning_at',None)
+        warning.start();self.addCleanup(warning.stop)
+        retry=patch.object(nhp,'_revocation_retry',{})
+        retry.start();self.addCleanup(retry.stop)
         with nhp.revocation_db() as c:
             c.execute('INSERT INTO links(id) VALUES(?)',('invitation-id',))
 
@@ -103,7 +109,109 @@ class RevocationRetryTests(unittest.TestCase):
 
     def test_native_timeout_has_safe_retryable_error(self):
         with patch.object(nhp.subprocess,'run',side_effect=subprocess.TimeoutExpired('machinectl',30)):
-            with self.assertRaises(AccessServiceError):nhp.NHPClient().delete_access_link(access_link_id='invitation-id')
+            with self.assertRaises(nhp.NativeAccessServiceError) as failure:
+                nhp.NHPClient().delete_access_link(access_link_id='invitation-id')
+        self.assertEqual(failure.exception.category,'native_timeout')
         self.assertEqual(self.pending(),1)
+
+    def test_native_failure_category_is_preserved_without_raw_output(self):
+        output=json.dumps({'ok':False,'category':'local_lock_contention',
+                           'error':'private identifier must be ignored'})
+        with patch.object(nhp.subprocess,'run',return_value=subprocess.CompletedProcess([],1,stdout=output)):
+            with self.assertRaises(nhp.NativeAccessServiceError) as failure:
+                nhp.machine({'op':'revoke_link','access_link_id':'private-id'})
+        self.assertEqual(failure.exception.category,'local_lock_contention')
+        self.assertNotIn('private',str(failure.exception))
+
+    def test_persistent_revocations_use_bounded_per_item_backoff(self):
+        with nhp.revocation_db() as c:
+            c.executemany('INSERT INTO pending_revocations(id) VALUES(?)',
+                          [('stale-one',),('stale-two',)])
+        failure=nhp.NativeAccessServiceError('local_lock_contention')
+        with patch.object(nhp,'machine',side_effect=failure) as send:
+            nhp.retry_revocations(now=0)
+            self.assertEqual(send.call_count,2)
+            nhp.retry_revocations(now=1)
+            self.assertEqual(send.call_count,2,'backoff must suppress the two-second worker retry')
+            nhp.retry_revocations(now=5)
+            self.assertEqual(send.call_count,4)
+        self.assertEqual({attempts for attempts,_ in nhp._revocation_retry.values()},{2})
+        self.assertEqual({deadline for _,deadline in nhp._revocation_retry.values()},{15})
+        self.assertEqual(self.pending(),2)
+
+    def test_failed_old_entries_cannot_starve_later_revocations(self):
+        with nhp.revocation_db() as c:
+            c.executemany('INSERT INTO pending_revocations(id) VALUES(?)',
+                          [(f'old-{i}',) for i in range(9)]+[('current',)])
+        attempted=[]
+        def send(body):
+            attempted.append(body['access_link_id'])
+            if body['access_link_id'].startswith('old-'):
+                raise AccessServiceError('unavailable')
+            return {'state':'revoked','network_admission_update':'applied'}
+        with patch.object(nhp,'machine',side_effect=send):
+            nhp.retry_revocations(now=0)
+            self.assertLessEqual(len(attempted),8)
+            nhp.retry_revocations(now=0)
+        self.assertIn('current',attempted)
+        with nhp.revocation_db() as c:
+            self.assertEqual({r['id'] for r in c.execute('SELECT id FROM pending_revocations')},
+                             {f'old-{i}' for i in range(9)})
+        with patch.object(nhp,'machine',return_value={'state':'revoked','network_admission_update':'applied'}):
+            nhp.retry_revocations(now=60)
+            nhp.retry_revocations(now=60)
+        self.assertEqual(self.pending(),0,'Previously failed work must remain retryable')
+
+    def test_bad_local_page_does_not_block_other_pages_or_send_unsafe_revocation(self):
+        from pages import PageConfigError, PageNotFoundError
+        from unittest.mock import Mock
+        store=Mock()
+        store.remove_access_grant.side_effect=[PageConfigError('bad page'),PageNotFoundError('already removed')]
+        with nhp.revocation_db() as c:
+            c.executemany('INSERT INTO pending_revocations VALUES(?,?,?)',
+                          [('bad','bad-page','bad-grant'),('good','good-page','good-grant')])
+        with patch.object(nhp,'machine',return_value={'state':'revoked','network_admission_update':'applied'}) as send:
+            nhp.retry_revocations(store)
+        send.assert_called_once_with({'op':'revoke_link','access_link_id':'good','defer_transport':15})
+        with nhp.revocation_db() as c:
+            self.assertEqual([r['id'] for r in c.execute('SELECT id FROM pending_revocations')],['bad'])
+
+    def test_invalid_native_response_remains_retryable(self):
+        for output in ('not json','[]','null'):
+            with self.subTest(output=output), patch.object(nhp.subprocess,'run',return_value=subprocess.CompletedProcess([],0,stdout=output)):
+                with self.assertRaises(AccessServiceError):
+                    nhp.machine({'op':'revoke_link','access_link_id':'invitation-id'})
+
+    def test_pending_diagnostics_are_rate_limited_and_do_not_log_link_or_error_data(self):
+        with nhp.revocation_db() as c:
+            c.execute("INSERT INTO pending_revocations(id) VALUES('private-link-id')")
+        with patch.object(nhp,'audit') as log, patch.object(nhp.time,'monotonic',side_effect=[100,101,160]), \
+             patch.object(nhp,'machine',side_effect=AccessServiceError('private-native-output')):
+            nhp.retry_revocations()
+            nhp.retry_revocations()
+            nhp.retry_revocations()
+        self.assertEqual(log.call_count,2)
+        for call in log.call_args_list:
+            self.assertEqual(call.args,('service_revocations_pending',))
+            self.assertEqual(call.kwargs,{'remaining':1,'reasons':['service_confirmation_unavailable']})
+        self.assertNotIn('private-',str(log.call_args_list))
+        with patch.object(nhp,'audit') as log, patch.object(nhp,'machine',return_value={'state':'revoked','network_admission_update':'applied'}):
+            nhp.retry_revocations()
+        log.assert_called_once_with('service_revocations_completed',completed=1,remaining=0)
+        self.assertIsNone(nhp._revocation_warning_at)
+
+    def test_worker_survives_local_failure_and_keeps_preparations_independent(self):
+        class StopWorker(Exception):pass
+        with patch.object(nhp.threading,'Thread') as thread, \
+             patch.object(nhp,'retry_revocations',side_effect=[ValueError('private-state'),None]) as retry, \
+             patch.object(nhp,'retry_preparations') as prepare, \
+             patch.object(nhp.time,'sleep',side_effect=[None,StopWorker]), \
+             patch.object(nhp,'audit') as log:
+            nhp.start_revocation_worker()
+            with self.assertRaises(StopWorker):
+                thread.call_args.kwargs['target']()
+        self.assertEqual(retry.call_count,2)
+        self.assertEqual(prepare.call_count,2)
+        log.assert_called_once_with('service_revocations_pending',remaining=None,reasons=['local_state_unavailable'])
 
 if __name__=='__main__':unittest.main()

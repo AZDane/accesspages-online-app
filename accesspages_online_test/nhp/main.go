@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"net/url"
+	"os"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -20,35 +20,76 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": false, "error": err.Error()})
+		// Machine output crosses process and privilege boundaries. Expose only a
+		// stable category; upstream errors can contain destinations, identifiers,
+		// or other request data that must not become application diagnostics.
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": false, "category": errorCategory(err)})
 		os.Exit(1)
 	}
 }
+
+type operationError struct {
+	category string
+	cause    error
+}
+
+func (e *operationError) Error() string { return e.category }
+func (e *operationError) Unwrap() error { return e.cause }
+func categorized(category string, cause error) error {
+	return &operationError{category: category, cause: cause}
+}
+func errorCategory(err error) string {
+	if value, ok := err.(*operationError); ok {
+		return value.category
+	}
+	return "native_failure"
+}
+
+func acquireOperationLock(machineDir string, wait time.Duration) (*os.File, error) {
+	lock, err := os.Open(filepath.Join(machineDir, "etc", "config.toml"))
+	if err != nil {
+		return nil, categorized("local_lock_unavailable", err)
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return lock, nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			lock.Close()
+			return nil, categorized("local_lock_unavailable", err)
+		}
+		if time.Now().After(deadline) {
+			lock.Close()
+			return nil, categorized("local_lock_contention", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func run() error {
 	var in map[string]any
 	if err := json.NewDecoder(io.LimitReader(os.Stdin, 8192)).Decode(&in); err != nil {
-		return fmt.Errorf("invalid input")
+		return categorized("invalid_request", err)
 	}
- machineDir:=os.Getenv("MACHINE_DIR");if machineDir==""{machineDir="/machine"}
+	machineDir := os.Getenv("MACHINE_DIR")
+	if machineDir == "" {
+		machineDir = "/machine"
+	}
 	// Separate Admin and supervisor processes can use the same installation key.
 	// Serialize those native sessions, with a finite queue wait, before Agent.Start.
 	// This identity file remains stable during normal operation, including on
 	// read-only Control Plane mounts. No extra writable credential directory.
-	lock,err:=os.Open(filepath.Join(machineDir,"etc","config.toml"))
-	if err!=nil{return fmt.Errorf("native operation lock unavailable")}
-	defer lock.Close()
-	deadline:=time.Now().Add(12*time.Second)
-	for {
-		err=syscall.Flock(int(lock.Fd()),syscall.LOCK_EX|syscall.LOCK_NB)
-		if err==nil{break}
-		if err!=syscall.EWOULDBLOCK && err!=syscall.EAGAIN{return fmt.Errorf("native operation lock failed")}
-		if time.Now().After(deadline){return fmt.Errorf("native operation busy; retry")}
-		time.Sleep(50*time.Millisecond)
+	lock, err := acquireOperationLock(machineDir, 12*time.Second)
+	if err != nil {
+		return err
 	}
-	defer syscall.Flock(int(lock.Fd()),syscall.LOCK_UN)
+	defer lock.Close()
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	a := &agent.UdpAgent{}
 	if err := a.Start(machineDir, 0); err != nil {
-		return fmt.Errorf("agent start failed: %v", err)
+		return categorized("native_start_unavailable", err)
 	}
 	defer a.Stop()
 	a.SetDeviceId("machine")
@@ -63,21 +104,26 @@ func run() error {
 	}
 	target := a.FindKnockTarget("guest", resource)
 	if target == nil {
-		return fmt.Errorf("unknown control resource")
+		return categorized("local_configuration", fmt.Errorf("unknown control resource"))
 	}
 	if op == "bind" {
 		bootstrap, _ := in["bootstrap"].(string)
 		gid, _ := in["gateway_id"].(string)
-		registrationData,_:=in["registration_data"].(map[string]any)
+		registrationData, _ := in["registration_data"].(map[string]any)
 		a.SetKnockUser(gid, "", registrationData)
 		ack, err := a.RegisterPublicKey(bootstrap, target)
-		if in["registration_diagnostics"]==true {
-			result:=map[string]any{"ok":err==nil && ack!=nil && ack.ErrCode=="0","received_ack":ack!=nil}
-			if ack!=nil {result["error_code"]=ack.ErrCode}
+		if in["registration_diagnostics"] == true {
+			result := map[string]any{"ok": err == nil && ack != nil && ack.ErrCode == "0", "received_ack": ack != nil}
+			if ack != nil {
+				result["error_code"] = ack.ErrCode
+			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
-		if err != nil || ack == nil || ack.ErrCode != "0" {
-			return fmt.Errorf("bind denied")
+		if err != nil || ack == nil {
+			return categorized("native_no_ack", err)
+		}
+		if ack.ErrCode != "0" {
+			return categorized("authenticated_denial", fmt.Errorf("bind denied"))
 		}
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": true, "gateway_id": gid})
 	}
@@ -86,37 +132,47 @@ func run() error {
 	ack, err := a.Knock(target)
 	if err != nil || ack == nil || ack.ErrCode != "0" {
 		if ack != nil {
-			return fmt.Errorf("NHP control admission denied (code=%s message=%q resource=%s)", ack.ErrCode, ack.ErrMsg, resource)
+			return categorized("authenticated_denial", fmt.Errorf("control admission denied"))
 		}
-		return fmt.Errorf("NHP control admission denied (no ACK: %v; resource=%s)", err, resource)
+		return categorized("native_no_ack", err)
 	}
 	if in["transport_only"] == true {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"ack": ack})
 	}
-	cert, err := os.ReadFile(machineDir+"/control.crt")
+	cert, err := os.ReadFile(machineDir + "/control.crt")
 	if err != nil {
-		return err
+		return categorized("local_configuration", err)
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(cert) {
-		return fmt.Errorf("bad authority certificate")
+		return categorized("local_configuration", fmt.Errorf("bad authority certificate"))
 	}
- client:=&http.Client{Timeout:10*time.Second,Transport:&http.Transport{TLSClientConfig:&tls.Config{RootCAs:roots,ServerName:"nhp-control",MinVersion:tls.VersionTLS12}},CheckRedirect:func(req *http.Request,via []*http.Request)error{return http.ErrUseLastResponse}}
- host:=ack.ResourceHost["control"]
- destination,err:=url.Parse("https://"+host+"/operate")
- if err!=nil || destination.Host!=host || destination.User!=nil || destination.Path!="/operate" || destination.RawQuery!="" || destination.Fragment!="" {return fmt.Errorf("invalid protected destination")}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "nhp-control", MinVersion: tls.VersionTLS12}}, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	host := ack.ResourceHost["control"]
+	destination, err := url.Parse("https://" + host + "/operate")
+	if err != nil || destination.Host != host || destination.User != nil || destination.Path != "/operate" || destination.RawQuery != "" || destination.Fragment != "" {
+		return categorized("invalid_response", err)
+	}
 	req, err := http.NewRequest("POST", destination.String(), bytes.NewReader(body))
- if err!=nil{return fmt.Errorf("invalid protected destination")}
+	if err != nil {
+		return categorized("invalid_response", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+ack.AuthProviderToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("protected API unavailable: %v", err)
+		return categorized("protected_api_unavailable", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("protected API denied (%d)", resp.StatusCode)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return categorized("authenticated_denial", fmt.Errorf("protected API denied"))
+		}
+		return categorized("protected_api_unavailable", fmt.Errorf("protected API status"))
 	}
 	_, err = io.Copy(os.Stdout, io.LimitReader(resp.Body, 16384))
-	return err
+	if err != nil {
+		return categorized("invalid_response", err)
+	}
+	return nil
 }
