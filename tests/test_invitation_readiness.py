@@ -37,7 +37,9 @@ class InvitationReadinessTests(unittest.TestCase):
         self.handler._validate_entity_policy = Mock()
         for change in (
             patch.dict(os.environ, {'GATEWAY_DATA_DIR': str(self.root),
-                'NHP_ROUTES_FILE': str(self.root / 'routes'), 'NHP_BINDING_FILE': str(self.root / 'binding')}),
+                'NHP_ROUTES_FILE': str(self.root / 'routes'),
+                'NHP_READY_ROUTES_FILE': str(self.root / 'ready-routes'),
+                'NHP_BINDING_FILE': str(self.root / 'binding')}),
             patch.object(nhp, 'ENABLED', True), patch.object(nhp, 'INSTALLATION_ROUTING', True),
             patch.object(server, 'PAGE_STORE', self.pages),
             patch.object(server, 'POLICY_PUBLISHER', Mock()),
@@ -50,6 +52,11 @@ class InvitationReadinessTests(unittest.TestCase):
 
     def publish(self):
         (self.root / 'routes').write_text(json.dumps(self.manifest))
+        (self.root / 'ready-routes').write_text(json.dumps({
+            'gateway_id': self.manifest['gateway_id'], 'epoch': self.manifest['epoch'],
+            'isolation': self.manifest['isolation'], 'checked_at': time.time(),
+            'resources': [item['resource_id'] for item in self.manifest['resources']],
+        }))
 
     def create_page(self, ident='page'):
         admin.handle_post(self.handler, '/api/admin/pages',
@@ -92,6 +99,19 @@ class InvitationReadinessTests(unittest.TestCase):
                          ['prepare_invitation', 'activate_invitation'])
         self.assertEqual(len(self.pages.load('page')['access_grants']), 1)
         self.assertNotIn('invitation_ready', self.pages.load('page'))
+
+    def test_stale_runtime_status_blocks_new_invitation_without_removing_route(self):
+        self.create_page()
+        self.manifest['resources'] = [self.route()]
+        self.publish()
+        self.assertTrue(self.view()['invitation_ready'])
+        (self.root / 'ready-routes').unlink()
+        self.assertFalse(self.view()['invitation_ready'])
+        with patch.object(nhp, 'machine') as send:
+            self.handler._create_access_link('page', {'label': 'Guest', 'lifetime': '1h'})
+        self.assertEqual(self.handler._send_json.call_args.args,
+                         (502, {'error': 'Page route is not ready'}))
+        send.assert_not_called()
 
     def test_existing_page_is_independent_and_route_removal_is_visible(self):
         self.create_page('existing')

@@ -18,7 +18,7 @@ import threading
 import time
 
 from ingress_control import ControlServer, INGRESS_UID
-from installation import Installation, atomic
+from installation import Installation, NativeOperationError, atomic
 from app_options import read_options, discovery_environment, resource_isolation
 
 ROOT=Path(os.getenv('ACCESSPAGES_DATA_DIR','/data'))
@@ -33,6 +33,19 @@ from resource_inventory import inventory as route_inventory
 
 GROUP=POLICY_GROUP
 USERS={'admin':1001,'broker':1003,'tls':1004,'connector':1005,'ingress':INGRESS_UID}
+CONNECTOR_STATUS_INTERVAL=45
+CONNECTOR_STATUS_RETRY=10
+# Two complete status intervals plus 30 seconds allow short local contention
+# without accepting an indefinitely unconfirmed hosted configuration.
+CONNECTOR_STATUS_STALE_LIMIT=120
+TRANSIENT_NATIVE_FAILURES=frozenset({
+    'local_lock_contention', 'native_timeout', 'native_no_ack',
+    'protected_api_unavailable',
+})
+
+
+class ConnectorStatusStale(RuntimeError):
+    category='connector_status_stale'
 
 
 def gateway_environment():
@@ -90,7 +103,9 @@ class Runtime:
         self.admin_token=self.secret('admin-token')
         self.broker_admin=self.secret('broker-admin-token')
         self.connector_health_password=self.secret('connector-health-token')
-        self.last_connector_status=0;self.last_certificate=0;self.last_authority=0
+        self.last_connector_status=0;self.next_connector_status=0
+        self.connector_status_stale_since=None;self.connector_status_failure_category=None
+        self.last_certificate=0;self.last_authority=0
         self.phase='installation status';self.last_error=None
         self.frpc_digest=hashlib.sha256(Path('/opt/frpc').read_bytes()).hexdigest()
 
@@ -173,14 +188,18 @@ class Runtime:
             ROOT/'admin/installation',
             server_address=configured_server_address(),
         )
-        self.last_connector_status=0;self.last_certificate=0;self.last_authority=0
+        self.last_connector_status=0;self.next_connector_status=0
+        self.connector_status_stale_since=None;self.connector_status_failure_category=None
+        self.last_certificate=0;self.last_authority=0
         self.last_error=None
         self.message='Paste the enrollment API token to connect this Home Assistant.'
         request.unlink(missing_ok=True)
 
     def public_status(self):
         roles=[*(r for r in USERS if r!='connector' or getattr(self,'resources',[])),*('page:'+str(record['uid']) for record in self.page_workers.state['pages'].values())]
-        ready=not getattr(self,'routes_pending',False) and all(self.children.get(r) and self.children[r].poll() is None and time.monotonic()-self.started.get(r,0)>2 for r in roles)
+        ready=(not getattr(self,'routes_pending',False)
+               and getattr(self,'connector_status_stale_since',None) is None
+               and all(self.children.get(r) and self.children[r].poll() is None and time.monotonic()-self.started.get(r,0)>2 for r in roles))
         if ready:
             try:
                 for port in (8081,8083,8444):
@@ -224,6 +243,53 @@ class Runtime:
         except (OSError,ValueError,http.client.HTTPException):return False
         finally:connection.close()
 
+    def report_wait(self, error):
+        category=getattr(error,'category',type(error).__name__)
+        signature=(self.phase,category)
+        if signature!=self.last_error:
+            # Categories are allowlisted at the native boundary. Never render
+            # the exception text, request, identity, or helper output.
+            print('Customer runtime waiting:',self.phase,category,flush=True)
+            self.last_error=signature
+
+    def refresh_connector_status(self, now):
+        stale_since=getattr(self,'connector_status_stale_since',None)
+        child=self.children.get('connector')
+        if stale_since is not None:
+            if child is None or child.poll() is not None:
+                raise ConnectorStatusStale('Connector process stopped while status was stale')
+            if now-self.last_connector_status>=CONNECTOR_STATUS_STALE_LIMIT:
+                raise ConnectorStatusStale('Connector status exceeded its stale deadline')
+            if now<getattr(self,'next_connector_status',0):
+                (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
+                return False
+        if now-self.last_connector_status<=CONNECTOR_STATUS_INTERVAL:
+            return True
+        self.phase='connector status'
+        try:
+            self.installation.refresh_connector()
+        except NativeOperationError as error:
+            self.next_connector_status=now+CONNECTOR_STATUS_RETRY
+            # Preservation is only valid for an established, locally healthy
+            # connector and a short, explicitly transient native failure.
+            healthy=(self.last_connector_status>0 and child is not None
+                     and child.poll() is None and self.connector_ready())
+            if (error.category in TRANSIENT_NATIVE_FAILURES
+                    and not error.connector_configuration_changed and healthy
+                    and now-self.last_connector_status<CONNECTOR_STATUS_STALE_LIMIT):
+                self.connector_status_stale_since=self.last_connector_status
+                self.connector_status_failure_category=error.category
+                (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
+                self.message='Waiting for connector status. Retrying automatically.'
+                self.report_wait(error)
+                return False
+            raise
+        self.last_connector_status=now
+        self.next_connector_status=now+CONNECTOR_STATUS_INTERVAL
+        self.connector_status_stale_since=None
+        self.connector_status_failure_category=None
+        return True
+
     def prepare(self):
         self.phase='installation status'
         now=time.monotonic()
@@ -232,11 +298,10 @@ class Runtime:
         binding=self.installation.recover_binding()
         if not (self.installation.root/'connector.json').exists():
             self.installation.ensure_connector()
-        if now-self.last_connector_status>45:
-            self.phase='connector status'
-            self.installation.refresh_connector()
+        if not self.refresh_connector_status(now):
+            return False
+        if self.phase=='connector status':
             binding=self.installation.recover_binding()
-            self.last_connector_status=now
         source=PageStore(ROOT/'admin/pages',file_mode=0o640)
         mode=resource_isolation(read_options(ROOT))
         mode_path=ROOT/'resource-isolation.json'
@@ -401,10 +466,7 @@ class Runtime:
                         self.stop('connector')
                         (ROOT/'admin/ready-routes.json').unlink(missing_ok=True)
                         self.message='Waiting for '+self.phase+'. Retrying automatically.'
-                        signature=(self.phase,type(error).__name__)
-                        if signature!=self.last_error:
-                            print('Customer runtime waiting:',self.phase,type(error).__name__,flush=True)
-                            self.last_error=signature
+                        self.report_wait(error)
             time.sleep(2)
 
 
