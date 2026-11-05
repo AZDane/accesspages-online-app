@@ -1,3 +1,9 @@
+## 0.1.0-beta.38
+
+- Keep an established guest connector running through brief local lock contention, native timeouts and protected-service status outages. Block new invitations while connector status is stale and fail closed after 120 seconds or on confirmed unsafe configuration, identity or process changes.
+- Retry each pending service revocation with bounded 5-to-60-second backoff and fair scheduling so stale cleanup cannot starve later work or repeatedly collide with connector status checks. Retain every durable revocation until the service confirms network withdrawal.
+- Emit privacy-safe native failure categories and rate-limited cleanup diagnostics without identifiers or raw native responses. Updating from beta.37 preserves enrollment, keys, pages, invitations and guest sessions; no reset, reinstall or hosted-service rollout is required.
+
 ## 0.1.0-beta.37
 
 - Fix updates that fail with Alpine package conflicts after Supervisor selects the wrong base image. Both supported architectures now select their digest-pinned Alpine 3.22 bases directly in the Dockerfile.
