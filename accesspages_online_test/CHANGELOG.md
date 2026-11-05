@@ -1,3 +1,9 @@
+## 0.1.0-beta.37
+
+- Fix updates that fail with Alpine package conflicts after Supervisor selects the wrong base image. Both supported architectures now select their digest-pinned Alpine 3.22 bases directly in the Dockerfile.
+- Include the reviewed Python, Expat and go-jose dependency updates and retain exact package pins. Normalize application directory permissions so private checkout permissions cannot prevent startup.
+- Back up and update the existing app normally. Updating from beta.36 preserves enrollment, keys, pages and guest state; no reset, reinstall or hosted-service rollout is required.
+
 ## 0.1.0-beta.36
 
 - Apply `Cache-Control: no-store` to every local broker response, including unsupported-method and parser errors. The public TLS frontend already applies this header; this extends the same protection to the private listeners.

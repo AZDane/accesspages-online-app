@@ -40,7 +40,7 @@ RUN cd /build/frp \
 FROM base-${BUILD_ARCH}
 
 ARG BUILD_ARCH=amd64
-ARG BUILD_VERSION=0.1.0-beta.36
+ARG BUILD_VERSION=0.1.0-beta.37
 LABEL io.hass.type="addon" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Access Pages Online" org.opencontainers.image.source="https://github.com/AZDane/accesspages-online-app"
 COPY apk.lock /tmp/apk.lock
