@@ -10,7 +10,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import nhp
 import route_reservations
@@ -24,16 +24,17 @@ class RegistrySchemaTests(unittest.TestCase):
                     route_reservations.reserve(directory, 'page', 'instance', 'hash')
                 before = route_reservations.pending(directory)
                 with nhp.revocation_db() as c:
-                    self.assertEqual([tuple(r) for r in c.execute('PRAGMA table_info(links)')], [(0, 'id', 'TEXT', 0, None, 1)])
+                    self.assertEqual([r['name'] for r in c.execute('PRAGMA table_info(links)')], ['id','revocation_token'])
                     self.assertEqual([tuple(r) for r in c.execute('PRAGMA table_info(pending_revocations)')], [
-                        (0, 'id', 'TEXT', 0, None, 1), (1, 'page', 'TEXT', 1, "''", 0), (2, 'grant_id', 'TEXT', 1, "''", 0)])
+                        (0, 'id', 'TEXT', 0, None, 1), (1, 'page', 'TEXT', 1, "''", 0), (2, 'grant_id', 'TEXT', 1, "''", 0),
+                        (3, 'revocation_token', 'TEXT', 1, "''", 0)])
                 self.assertEqual(route_reservations.pending(directory), before)
 
     def test_current_identifiers_and_pending_work_survive_process_reopen_unchanged(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'GATEWAY_DATA_DIR': directory}):
             with nhp.revocation_db() as c:
-                c.execute("INSERT INTO links VALUES('known')")
-                c.execute("INSERT INTO pending_revocations VALUES('known','page','grant')")
+                c.execute("INSERT INTO links(id,revocation_token) VALUES('known','token')")
+                c.execute("INSERT INTO pending_revocations(id,page,grant_id,revocation_token) VALUES('known','page','grant','token')")
                 c.execute("INSERT INTO pending_revocations(id) VALUES('orphan')")
             path = Path(directory) / 'nhp-links.db'
             before = path.read_bytes()
@@ -41,16 +42,29 @@ class RegistrySchemaTests(unittest.TestCase):
                            env={**os.environ, 'PYTHONPATH': str(Path(nhp.__file__).parent)}, check=True)
             self.assertEqual(path.read_bytes(), before)
             with nhp.revocation_db() as c:
-                self.assertEqual([tuple(r) for r in c.execute('SELECT * FROM links')], [('known',)])
+                self.assertEqual([tuple(r) for r in c.execute('SELECT * FROM links')], [('known','token')])
                 self.assertEqual([tuple(r) for r in c.execute('SELECT * FROM pending_revocations ORDER BY id')],
-                                 [('known', 'page', 'grant'), ('orphan', '', '')])
+                                 [('known', 'page', 'grant','token'), ('orphan', '', '','')])
+
+    def test_beta38_registry_is_migrated_exactly_once_with_empty_legacy_capabilities(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'GATEWAY_DATA_DIR': directory}):
+            path=Path(directory)/'nhp-links.db'
+            with sqlite3.connect(path) as c:
+                c.executescript("""CREATE TABLE links(id TEXT PRIMARY KEY);
+                 CREATE TABLE pending_revocations(id TEXT PRIMARY KEY,page TEXT NOT NULL DEFAULT '',grant_id TEXT NOT NULL DEFAULT '');
+                 INSERT INTO links VALUES('known');
+                 INSERT INTO pending_revocations VALUES('known','page','grant');""")
+            for _ in range(2):
+                with nhp.revocation_db() as c:
+                    self.assertEqual(tuple(c.execute('SELECT * FROM links').fetchone()),('known',''))
+                    self.assertEqual(tuple(c.execute('SELECT * FROM pending_revocations').fetchone()),('known','page','grant',''))
 
     def test_incompatible_tables_are_refused_without_mutation_or_missing_table_creation(self):
-        current_links = 'CREATE TABLE links(id TEXT PRIMARY KEY);'
+        current_links = "CREATE TABLE links(id TEXT PRIMARY KEY, revocation_token TEXT NOT NULL DEFAULT '');"
         old_links = "CREATE TABLE links(id TEXT PRIMARY KEY, secret TEXT NOT NULL); INSERT INTO links VALUES('known','synthetic-secret');"
         old_pending = "CREATE TABLE pending_revocations(id TEXT PRIMARY KEY); INSERT INTO pending_revocations VALUES('pending');"
         partial_pending = "CREATE TABLE pending_revocations(id TEXT PRIMARY KEY, page TEXT NOT NULL DEFAULT ''); INSERT INTO pending_revocations VALUES('pending','page');"
-        current_pending = "CREATE TABLE pending_revocations(id TEXT PRIMARY KEY, page TEXT NOT NULL DEFAULT '', grant_id TEXT NOT NULL DEFAULT ''); INSERT INTO pending_revocations VALUES('pending','page','grant');"
+        current_pending = "CREATE TABLE pending_revocations(id TEXT PRIMARY KEY, page TEXT NOT NULL DEFAULT '', grant_id TEXT NOT NULL DEFAULT '', revocation_token TEXT NOT NULL DEFAULT ''); INSERT INTO pending_revocations VALUES('pending','page','grant','');"
         for schema in (old_links, old_pending, partial_pending, old_links + old_pending,
                        old_links + current_pending, current_links + old_pending, current_links + partial_pending):
             with self.subTest(schema=schema), tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'GATEWAY_DATA_DIR': directory}):
@@ -123,6 +137,29 @@ class RevocationRetryTests(unittest.TestCase):
         self.assertEqual(failure.exception.category,'local_lock_contention')
         self.assertNotIn('private',str(failure.exception))
 
+    def test_revocation_capability_survives_queue_and_is_not_logged(self):
+        token='A'*43
+        with nhp.revocation_db() as c:
+            c.execute('UPDATE links SET revocation_token=? WHERE id=?',(token,'invitation-id'))
+        nhp.NHPClient().prepare_revocation(access_link_id='invitation-id',page_id='page',grant_id='grant')
+        with nhp.revocation_db() as c:
+            self.assertEqual(c.execute('SELECT revocation_token FROM pending_revocations').fetchone()[0],token)
+        with patch.object(nhp,'machine',side_effect=nhp.NativeAccessServiceError('revocation_owner_mismatch')) as send, \
+             patch.object(nhp,'audit') as log:
+            nhp.retry_revocations(Mock(),now=0)
+        self.assertEqual(send.call_args.args[0]['revocation_token'],token)
+        self.assertNotIn(token,str(log.call_args_list))
+
+    def test_direct_delete_copies_capability_to_outbox_before_network(self):
+        token='A'*43
+        with nhp.revocation_db() as c:
+            c.execute('UPDATE links SET revocation_token=? WHERE id=?',(token,'invitation-id'))
+        with patch.object(nhp,'machine',side_effect=AccessServiceError('unavailable')):
+            with self.assertRaises(AccessServiceError):
+                nhp.NHPClient().delete_access_link(access_link_id='invitation-id')
+        with nhp.revocation_db() as c:
+            self.assertEqual(c.execute('SELECT revocation_token FROM pending_revocations').fetchone()[0],token)
+
     def test_persistent_revocations_use_bounded_per_item_backoff(self):
         with nhp.revocation_db() as c:
             c.executemany('INSERT INTO pending_revocations(id) VALUES(?)',
@@ -168,7 +205,7 @@ class RevocationRetryTests(unittest.TestCase):
         store=Mock()
         store.remove_access_grant.side_effect=[PageConfigError('bad page'),PageNotFoundError('already removed')]
         with nhp.revocation_db() as c:
-            c.executemany('INSERT INTO pending_revocations VALUES(?,?,?)',
+            c.executemany('INSERT INTO pending_revocations(id,page,grant_id) VALUES(?,?,?)',
                           [('bad','bad-page','bad-grant'),('good','good-page','good-grant')])
         with patch.object(nhp,'machine',return_value={'state':'revoked','network_admission_update':'applied'}) as send:
             nhp.retry_revocations(store)

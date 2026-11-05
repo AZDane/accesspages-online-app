@@ -149,6 +149,7 @@ class EnrollmentTests(unittest.TestCase):
                 'private_key': 'Nm6FyA9B_gz62XMwvRN26sEYs-4Z8dG9UAG2Mjtkcys',
                 'public_key': 'G7sJlz8MzcfyWH9jsDJDV6nEHuVMobOSE3pHMMFPHio=',
                 'invitation_id': '545cd03857dfe54315b91661ea421411808ad60f5d873805cd42b6523b3f904d',
+                'revocation_token': 'A' * 43,
                 'landing_url': nhp.LANDING_ORIGIN+'/', 'expires': 1900000000,
             }
             calls = []
@@ -166,7 +167,8 @@ class EnrollmentTests(unittest.TestCase):
                 self.assertEqual(calls[0]['resource'], resource)
                 self.assertEqual(result['access_link_id'], delivery['invitation_id'])
                 client.delete_access_link(access_link_id=result['access_link_id'])
-                self.assertEqual(calls[-1], {'op': 'revoke_link', 'access_link_id': result['access_link_id'], 'defer_transport': 15})
+                self.assertEqual(calls[-1], {'op': 'revoke_link', 'access_link_id': result['access_link_id'],
+                                             'defer_transport': 15, 'revocation_token': delivery['revocation_token']})
                 with nhp.revocation_db() as database:
                     self.assertEqual(database.execute('SELECT COUNT(*) FROM links').fetchone()[0], 0)
                     self.assertEqual(database.execute('SELECT COUNT(*) FROM pending_revocations').fetchone()[0], 0)
