@@ -17,6 +17,7 @@ NATIVE_ERROR_CATEGORIES = frozenset({
     'invalid_request', 'local_lock_unavailable', 'local_lock_contention',
     'local_configuration', 'native_start_unavailable', 'native_no_ack',
     'native_timeout', 'protected_api_unavailable', 'authenticated_denial',
+    'revocation_owner_mismatch',
     'invalid_response', 'native_failure',
 })
 

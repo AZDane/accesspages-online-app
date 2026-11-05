@@ -22,6 +22,7 @@ NATIVE_ERROR_CATEGORIES = frozenset({
     'invalid_request', 'local_lock_unavailable', 'local_lock_contention',
     'local_configuration', 'native_start_unavailable', 'native_no_ack',
     'native_timeout', 'protected_api_unavailable', 'authenticated_denial',
+    'revocation_owner_mismatch',
     'invalid_response', 'native_failure',
 })
 try:
@@ -164,8 +165,12 @@ def invitation_key(result):
         public=X25519PrivateKey.from_private_bytes(raw).public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
         ident=hashlib.sha256(public).hexdigest()
         if result['public_key'] != base64.b64encode(public).decode() or result['invitation_id'] != ident: raise ValueError()
+        revocation_token=result['revocation_token']
+        if not re.fullmatch(r'[A-Za-z0-9_-]{43}', revocation_token): raise ValueError()
+        revocation_raw=base64.urlsafe_b64decode(revocation_token+'=')
+        if base64.urlsafe_b64encode(revocation_raw).decode().rstrip('=') != revocation_token: raise ValueError()
         if result['landing_url'] != LANDING_ORIGIN+'/': raise ValueError()
-        return encoded, ident
+        return encoded, ident, revocation_token
     except (ValueError, KeyError, TypeError) as error:
         raise AccessServiceError('Invalid invitation key delivery') from error
 
@@ -209,9 +214,9 @@ class NHPClient:
             with revocation_db() as c:
                 c.execute('INSERT INTO pending_preparations(request_id,created) VALUES(?,?)',(request_id,int(time.time())))
             result=machine({'op':'prepare_invitation','request_id':request_id,'guest_token_hash':token_hash,'resource':resource,'ttl':ttl,'one_time_use':one_time_use,'verification_method':verification_method,'verification_email':verification_email})
-            secret,ident=invitation_key(result)
+            secret,ident,revocation_token=invitation_key(result)
             with revocation_db() as c:
-                c.execute('INSERT INTO links(id) VALUES(?)', (ident,))
+                c.execute('INSERT INTO links(id,revocation_token) VALUES(?,?)', (ident,revocation_token))
                 c.execute('UPDATE pending_preparations SET id=? WHERE request_id=?',(ident,request_id))
         except Exception:
             if guest_mode:
@@ -252,15 +257,28 @@ class NHPClient:
         rows = [(g['access_link_id'], page_id, g['id']) for g in grants if g.get('access_link_id')]
         if rows:
             with revocation_db() as c:
-                c.executemany('INSERT OR IGNORE INTO pending_revocations(id,page,grant_id) VALUES(?,?,?)', rows)
+                for ident,page,grant in rows:
+                    stored=c.execute('SELECT revocation_token FROM links WHERE id=?',(ident,)).fetchone()
+                    token=stored['revocation_token'] if stored else ''
+                    c.execute("""INSERT INTO pending_revocations(id,page,grant_id,revocation_token) VALUES(?,?,?,?)
+                     ON CONFLICT(id) DO UPDATE SET page=excluded.page,grant_id=excluded.grant_id,
+                     revocation_token=CASE WHEN pending_revocations.revocation_token='' THEN excluded.revocation_token ELSE pending_revocations.revocation_token END""",
+                              (ident,page,grant,token))
 
     def delete_access_link(self, *, access_link_id, **kwargs):
         # Commit the outbox before trying the network. The local guest has
         # already been disabled; service outages must not lose revocation.
         with revocation_db() as c:
-            row=c.execute('SELECT id FROM links WHERE id=? UNION SELECT id FROM pending_revocations WHERE id=?', (access_link_id, access_link_id)).fetchone()
+            row=c.execute("""SELECT ? AS id,COALESCE(
+             NULLIF((SELECT revocation_token FROM pending_revocations WHERE id=?),''),
+             (SELECT revocation_token FROM links WHERE id=?),'') AS revocation_token
+             WHERE EXISTS(SELECT 1 FROM links WHERE id=?) OR EXISTS(SELECT 1 FROM pending_revocations WHERE id=?)""",
+                          (access_link_id,)*5).fetchone()
             if row is None:return True
-            c.execute('INSERT OR IGNORE INTO pending_revocations(id) VALUES(?)',(access_link_id,))
+            c.execute("""INSERT INTO pending_revocations(id,revocation_token) VALUES(?,?)
+             ON CONFLICT(id) DO UPDATE SET revocation_token=CASE WHEN pending_revocations.revocation_token=''
+             THEN excluded.revocation_token ELSE pending_revocations.revocation_token END""",
+                      (access_link_id,row['revocation_token']))
         if not _revocation_lock.acquire(blocking=False):
             raise AccessServiceError('Local access revoked; service revocation is queued for retry')
         try:_send_revocation(access_link_id)
@@ -297,19 +315,35 @@ def revocation_db():
             # Serialize initialization with minting and the retry worker. Check
             # both existing tables before creating either; never convert old state.
             c.execute('BEGIN IMMEDIATE')
-            for table, expected in (('links', ('id',)), ('pending_revocations', ('id', 'page', 'grant_id'))):
+            schemas=(
+                ('links', ('id','revocation_token'), ('id',)),
+                ('pending_revocations', ('id','page','grant_id','revocation_token'), ('id','page','grant_id')),
+            )
+            existing={}
+            for table, expected, legacy in schemas:
                 columns=tuple(r['name'] for r in c.execute(f'PRAGMA table_info({table})'))
-                if columns and columns != expected:
+                if columns and columns not in (expected,legacy):
                     raise sqlite3.DatabaseError('Unsupported invitation registry schema; recover from an accepted v3 backup (docs/backup-restore.md)')
-            c.execute('CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY)')
-            c.execute("CREATE TABLE IF NOT EXISTS pending_revocations(id TEXT PRIMARY KEY, page TEXT NOT NULL DEFAULT '', grant_id TEXT NOT NULL DEFAULT '')")
+                existing[table]=columns
+            c.execute("CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY, revocation_token TEXT NOT NULL DEFAULT '')")
+            c.execute("CREATE TABLE IF NOT EXISTS pending_revocations(id TEXT PRIMARY KEY, page TEXT NOT NULL DEFAULT '', grant_id TEXT NOT NULL DEFAULT '', revocation_token TEXT NOT NULL DEFAULT '')")
+            for table, expected, legacy in schemas:
+                if existing[table] == legacy:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN revocation_token TEXT NOT NULL DEFAULT ''")
             c.execute("CREATE TABLE IF NOT EXISTS pending_preparations(request_id TEXT PRIMARY KEY,id TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL)")
             yield c
     finally:c.close()
 
 def _send_revocation(ident):
     # Even an orphaned outbox row must be sent, never silently discarded.
-    result=machine({'op':'revoke_link','access_link_id':ident,'defer_transport':15})
+    with revocation_db() as c:
+        row=c.execute('SELECT revocation_token FROM pending_revocations WHERE id=?',(ident,)).fetchone()
+        if row is None or not row['revocation_token']:
+            row=c.execute('SELECT revocation_token FROM links WHERE id=?',(ident,)).fetchone()
+    request={'op':'revoke_link','access_link_id':ident,'defer_transport':15}
+    if row and row['revocation_token']:
+        request['revocation_token']=row['revocation_token']
+    result=machine(request)
     if result.get('state')!='revoked' or result.get('network_admission_update') not in ('applied','deferred'):
         raise AccessServiceError('Local access revoked; network revocation is awaiting confirmation')
     with revocation_db() as c:

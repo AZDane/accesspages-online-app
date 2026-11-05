@@ -45,6 +45,17 @@ func errorCategory(err error) string {
 	return "native_failure"
 }
 
+func protectedStatusCategory(status int) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "authenticated_denial"
+	case http.StatusConflict:
+		return "revocation_owner_mismatch"
+	default:
+		return "protected_api_unavailable"
+	}
+}
+
 func acquireOperationLock(machineDir string, wait time.Duration) (*os.File, error) {
 	lock, err := os.Open(filepath.Join(machineDir, "etc", "config.toml"))
 	if err != nil {
@@ -165,10 +176,7 @@ func run() error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return categorized("authenticated_denial", fmt.Errorf("protected API denied"))
-		}
-		return categorized("protected_api_unavailable", fmt.Errorf("protected API status"))
+		return categorized(protectedStatusCategory(resp.StatusCode), fmt.Errorf("protected API status"))
 	}
 	_, err = io.Copy(os.Stdout, io.LimitReader(resp.Body, 16384))
 	if err != nil {
